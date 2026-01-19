@@ -99,6 +99,7 @@ class AgentManager:
                     break
                 
                 logger.info(f"Found {len(tool_call_ids)} pending approval(s), clearing... (iteration {iteration + 1})")
+                logger.debug(f"  Tool call IDs to deny: {tool_call_ids}")
                 
                 # Deny all pending approvals
                 approvals = [
@@ -112,24 +113,38 @@ class AgentManager:
                 ]
                 
                 try:
-                    await self.client.agents.messages.create(
-                        agent_id=agent_id,
-                        messages=[{
-                            "type": "approval",
-                            "approvals": approvals,
-                        }],
+                    import asyncio as _asyncio
+                    # Timeout denial to prevent hanging (30 seconds should be plenty)
+                    await _asyncio.wait_for(
+                        self.client.agents.messages.create(
+                            agent_id=agent_id,
+                            messages=[{
+                                "type": "approval",
+                                "approvals": approvals,
+                            }],
+                        ),
+                        timeout=30.0
                     )
                     
                     for tc_id in tool_call_ids:
                         logger.info(f"  Cleared: {tc_id}")
                     
                     cleared_any = True
+                except _asyncio.TimeoutError:
+                    logger.warning("Denial request timed out after 30s, retrying with fresh state...")
+                    continue
                 except Exception as deny_error:
                     error_str = str(deny_error)
                     if "Invalid tool call IDs" in error_str:
                         # Race condition: state changed between fetch and deny
                         # Continue to next iteration to get fresh state
                         logger.warning(f"Tool call ID mismatch (state changed), retrying with fresh state...")
+                        continue
+                    elif "No tool call is currently awaiting approval" in error_str:
+                        # Approval already cleared (timed out or cleared by another process)
+                        # This is fine - the approval is gone which is what we wanted
+                        logger.info("Approval already cleared (timed out or handled elsewhere)")
+                        cleared_any = True
                         continue
                     else:
                         raise
