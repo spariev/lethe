@@ -10,6 +10,16 @@ Lethe is a 24/7 AI assistant that you communicate with via Telegram. It processe
 >
 > Only run Lethe on systems where you trust the agent with full access. Consider running in a VM or container if you need isolation.
 
+## Goals
+
+Build a **fully autonomous, personified AI assistant** that:
+
+- 🧠 **Never forgets** - Persistent memory ensures important details are retained across sessions
+- 🎯 **Proactively helps** - Doesn't just wait for commands; anticipates needs and follows up
+- 🌱 **Learns continuously** - Improves its knowledge and adapts to your preferences over time
+- 🤖 **Feels like a colleague** - Anthropomorphic presence with consistent personality and expertise
+- ⚡ **Operates 24/7** - Always available, processes tasks asynchronously in the background
+
 ## Self-Modifying Agent
 
 Lethe uses Letta's persistent memory, which means:
