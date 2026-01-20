@@ -987,7 +987,7 @@ I'll update this as I learn about my principal's current projects and priorities
         is_system_message = message.startswith("[HEARTBEAT]") or message.startswith("[SYSTEM]")
         if self.settings.hippocampus_enabled and not is_system_message:
             try:
-                recent_messages = await self.get_recent_messages(limit=5)
+                recent_messages = await self.get_recent_messages(limit=15)
                 message = await self.hippocampus.augment_message(
                     main_agent_id=agent_id,
                     new_message=message,

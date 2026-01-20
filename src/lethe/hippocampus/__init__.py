@@ -113,7 +113,7 @@ class HippocampusManager:
             
             # Format the context for analysis
             context_lines = []
-            for msg in recent_messages[-5:]:  # Last 5 messages
+            for msg in recent_messages[-15:]:  # Last 15 messages
                 role = msg.get("role", "unknown")
                 content = msg.get("content", "")
                 if isinstance(content, list):
@@ -126,13 +126,13 @@ class HippocampusManager:
             
             context = "\n".join(context_lines) if context_lines else "(no previous messages)"
             
-            prompt = f"""CONTEXT (recent messages):
+            prompt = f"""CONTEXT (recent conversation):
 {context}
 
-NEW MESSAGE:
+LAST MESSAGE FROM USER:
 {new_message[:500]}
 
-Does the NEW MESSAGE introduce a different topic than the context? If yes, what should I search for?
+Did the topic change in this LAST MESSAGE compared to the conversation above? If yes, what should I search for in memory?
 JSON only:"""
 
             # Send to hippocampus agent
