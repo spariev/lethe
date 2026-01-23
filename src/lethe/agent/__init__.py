@@ -851,9 +851,9 @@ I'll update this as I learn about my principal's current projects and priorities
         return tool_names
 
     async def _sync_agent_tools(self, agent_id: str) -> None:
-        """Sync tools with an existing agent - attach missing, optionally detach removed.
+        """Sync tools with an existing agent - attach missing, detach removed.
         
-        Called on startup to ensure agent has all current tools.
+        Called on startup to ensure agent has exactly the current tools.
         """
         # First, register all tools with Letta (upsert ensures they exist)
         expected_tool_names = await self._register_tools()
@@ -866,22 +866,22 @@ I'll update this as I learn about my principal's current projects and priorities
             "archival_memory_search",
         ]
         expected_tool_names.extend(builtin_tools)
+        expected_set = set(expected_tool_names)
         
         # Get agent's current tools
         agent = await self.client.agents.retrieve(agent_id)
-        current_tool_names = [t.name for t in agent.tools]
+        current_tools = {t.name: t.id for t in agent.tools}
+        current_set = set(current_tools.keys())
         
-        # Find missing tools
-        missing_tools = set(expected_tool_names) - set(current_tool_names)
+        # Find missing and extra tools
+        missing_tools = expected_set - current_set
+        extra_tools = current_set - expected_set
         
-        if not missing_tools:
-            logger.info("All tools already attached to agent")
+        if not missing_tools and not extra_tools:
+            logger.info("All tools in sync")
             return
         
-        logger.info(f"Syncing {len(missing_tools)} missing tools: {missing_tools}")
-        
         # Get tool IDs for missing tools
-        # List all tools and filter by name
         all_tools = []
         tools_response = await self.client.tools.list()
         if hasattr(tools_response, '__aiter__'):
@@ -893,19 +893,36 @@ I'll update this as I learn about my principal's current projects and priorities
         tool_id_map = {t.name: t.id for t in all_tools}
         
         # Attach missing tools
-        for tool_name in missing_tools:
-            tool_id = tool_id_map.get(tool_name)
-            if tool_id:
-                try:
-                    await self.client.agents.tools.attach(
-                        agent_id=agent_id,
-                        tool_id=tool_id,
-                    )
-                    logger.info(f"  Attached: {tool_name}")
-                except Exception as e:
-                    logger.warning(f"  Failed to attach {tool_name}: {e}")
-            else:
-                logger.warning(f"  Tool not found in registry: {tool_name}")
+        if missing_tools:
+            logger.info(f"Attaching {len(missing_tools)} tools: {missing_tools}")
+            for tool_name in missing_tools:
+                tool_id = tool_id_map.get(tool_name)
+                if tool_id:
+                    try:
+                        await self.client.agents.tools.attach(
+                            agent_id=agent_id,
+                            tool_id=tool_id,
+                        )
+                        logger.info(f"  Attached: {tool_name}")
+                    except Exception as e:
+                        logger.warning(f"  Failed to attach {tool_name}: {e}")
+                else:
+                    logger.warning(f"  Tool not found in registry: {tool_name}")
+        
+        # Detach extra tools (no longer in codebase)
+        if extra_tools:
+            logger.info(f"Detaching {len(extra_tools)} removed tools: {extra_tools}")
+            for tool_name in extra_tools:
+                tool_id = current_tools.get(tool_name)
+                if tool_id:
+                    try:
+                        await self.client.agents.tools.detach(
+                            agent_id=agent_id,
+                            tool_id=tool_id,
+                        )
+                        logger.info(f"  Detached: {tool_name}")
+                    except Exception as e:
+                        logger.warning(f"  Failed to detach {tool_name}: {e}")
 
     async def _recover_from_pending_approval(self, agent_id: str, original_messages: list, error_str: str = ""):
         """Recover from a stuck pending approval state by denying it and retrying."""
