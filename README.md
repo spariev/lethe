@@ -29,13 +29,13 @@ Both Lethe and [Clawd](https://clawd.bot) are autonomous AI assistants, but diff
 
 | Feature | Lethe | Clawd |
 |---------|-------|-------|
+| **Token Economy** | **3-5x cheaper** - selective memory loading, accessibility-tree browsing, proactive compaction | Higher token consumption - full file injection, reactive compaction |
 | **Context Management** | **Letta integration** - automatic context engineering with 3-tier memory (working/episodic/archival) | Manual file-based memory (MEMORY.md, daily logs) with vector search |
 | **Compaction** | **Automatic** - Letta handles memory consolidation seamlessly, no context overflow | Reactive - triggers on context limit, requires manual memory flush |
 | **Memory Retrieval** | Hippocampus subagent pre-loads relevant context (1-3k tokens) | Hybrid BM25 + vector search in session |
 | **Identity** | Persistent self-modifying memory blocks | Bootstrap files loaded at session start |
 | **Primary Use** | Single autonomous assistant, 24/7 operation | Multi-platform messaging gateway |
 | **Browser** | Accessibility tree (90% token reduction) | Standard browser automation |
-| **Token Economy** | **3-5x cheaper** - selective memory loading, accessibility-tree browsing, proactive compaction | Higher token consumption - full file injection, reactive compaction |
 
 ### Why Letta Integration Matters
 
