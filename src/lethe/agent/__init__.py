@@ -956,10 +956,16 @@ I'll update this as I learn about my principal's current projects and priorities
             messages=original_messages,
         )
 
-    async def _execute_tool_locally(self, tool_name: str, arguments: dict) -> tuple[str, str]:
-        """Execute a tool locally and return (result, status).
+    async def _execute_tool_locally(self, tool_name: str, arguments: dict) -> tuple[str, str, Optional[dict]]:
+        """Execute a tool locally and return (result, status, image_attachment).
         
         Async tools are called directly. Sync tools run in thread pool executor.
+        
+        Returns:
+            tuple: (result_string, status, optional_image_attachment)
+            
+            If the result contains "_image_attachment" field, it's extracted
+            and returned separately so it can be injected into the conversation.
         """
         import asyncio
         import functools
@@ -967,7 +973,7 @@ I'll update this as I learn about my principal's current projects and priorities
         
         handler = self._tool_handlers.get(tool_name)
         if not handler:
-            return f"Unknown tool: {tool_name}", "error"
+            return f"Unknown tool: {tool_name}", "error", None
 
         try:
             # Check if handler is async
@@ -987,13 +993,26 @@ I'll update this as I learn about my principal's current projects and priorities
                     ),
                     timeout=60.0
                 )
-            return str(result), "success"
+            
+            # Check if result contains an image attachment
+            image_attachment = None
+            result_str = str(result)
+            
+            try:
+                result_data = json.loads(result_str)
+                if isinstance(result_data, dict) and "_image_attachment" in result_data:
+                    image_attachment = result_data.pop("_image_attachment")
+                    result_str = json.dumps(result_data, indent=2)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            
+            return result_str, "success", image_attachment
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:
-            return f"Tool execution timed out after 60 seconds", "error"
+            return f"Tool execution timed out after 60 seconds", "error", None
         except Exception as e:
-            return f"Tool execution error: {e}", "error"
+            return f"Tool execution error: {e}", "error", None
 
     async def send_message(
         self, 
@@ -1170,7 +1189,7 @@ I'll update this as I learn about my principal's current projects and priorities
                     logger.info(f"Executing tool locally: {tool_name}({tool_args})")
                     
                     # Execute locally
-                    result, status = await self._execute_tool_locally(tool_name, tool_args)
+                    result, status, image_attachment = await self._execute_tool_locally(tool_name, tool_args)
                     result_preview = (result[:200] + "...") if result and len(result) > 200 else (result or "(empty)")
                     logger.info(f"  Tool result ({status}): {result_preview}")
                     
@@ -1179,6 +1198,7 @@ I'll update this as I learn about my principal's current projects and priorities
                         "tool_call_id": tool_call_id,
                         "tool_return": result,
                         "status": status,
+                        "_image_attachment": image_attachment,  # May be None
                     })
 
             # Check if we're done
@@ -1194,10 +1214,36 @@ I'll update this as I learn about my principal's current projects and priorities
                 
                 # Send tool results back - MUST complete to avoid leaving agent in pending state
                 logger.info(f"Sending {len(approvals_needed)} tool results back to agent")
+                
+                # Extract image attachments to inject after tool results
+                image_attachments = []
+                clean_approvals = []
+                for approval in approvals_needed:
+                    img = approval.pop("_image_attachment", None)
+                    if img:
+                        image_attachments.append(img)
+                    clean_approvals.append(approval)
+                
                 messages = [{
                     "type": "approval",
-                    "approvals": approvals_needed,
+                    "approvals": clean_approvals,
                 }]
+                
+                # If there are images, add them as a follow-up user message
+                if image_attachments:
+                    logger.info(f"Injecting {len(image_attachments)} image(s) for agent to see")
+                    image_content = [{"type": "text", "text": "[Screenshot captured - see image below]"}]
+                    for img in image_attachments:
+                        image_content.append({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": img.get("media_type", "image/png"),
+                                "data": img["base64_data"],
+                            }
+                        })
+                    messages.append({"role": "user", "content": image_content})
+                
                 continue
             
             # Use hippocampus to judge response and decide next steps

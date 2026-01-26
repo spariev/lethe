@@ -294,6 +294,8 @@ async def stagehand_screenshot_async(
     Uses Playwright connected to Stagehand's browser via CDP for screenshots,
     and Stagehand's AI to describe what's visible on the page.
     
+    The screenshot image is automatically shown to the agent (multimodal).
+    
     Args:
         save_path: Optional path to save the screenshot file
         full_page: Capture full scrollable page (default: False)
@@ -333,8 +335,12 @@ async def stagehand_screenshot_async(
             except Exception as e:
                 result["description"] = f"(Could not describe: {e})"
         
-        # Include base64 for potential multimodal use, but truncate in display
-        result["screenshot_base64"] = b64
+        # Include image attachment for multimodal injection
+        # This will be extracted by the agent and shown as an image
+        result["_image_attachment"] = {
+            "base64_data": b64,
+            "media_type": "image/png",
+        }
         
         return json.dumps(result, indent=2)
     except Exception as e:
