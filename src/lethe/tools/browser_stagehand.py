@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 # Global session state
 _stagehand_client = None
 _session_id: Optional[str] = None
+_cdp_url: Optional[str] = None
+_playwright = None
+_playwright_page = None
 
 
 def _get_api_key() -> str:
@@ -36,7 +39,7 @@ def _get_api_key() -> str:
 
 async def _get_session() -> str:
     """Get or create a Stagehand session. Returns session_id."""
-    global _stagehand_client, _session_id
+    global _stagehand_client, _session_id, _cdp_url
     
     if _session_id is not None:
         return _session_id
@@ -52,7 +55,7 @@ async def _get_session() -> str:
         browserbase_api_key="local",  # Dummy - not used in local mode
         browserbase_project_id="local",  # Dummy - not used in local mode
         model_api_key=api_key,
-        local_headless=False,  # Set to True for headless
+        local_headless=True,  # Headless mode
         local_port=0,  # Auto-pick free port
         local_ready_timeout_s=30.0,
     )
@@ -65,14 +68,15 @@ async def _get_session() -> str:
         browser={
             "type": "local",
             "launchOptions": {
-                "headless": False,  # Match the client setting
+                "headless": True,
             },
         },
     )
     _session_id = session.data.session_id
+    _cdp_url = session.data.cdp_url
     
     logger.info(f"Stagehand session started: {_session_id}")
-    logger.info(f"Server running at: {_stagehand_client.base_url}")
+    logger.info(f"CDP URL: {_cdp_url}")
     
     return _session_id
 
@@ -252,36 +256,64 @@ async def stagehand_observe_async(instruction: str = "") -> str:
         }, indent=2)
 
 
-async def stagehand_screenshot_async(save_path: str = "") -> str:
+async def _get_playwright_page():
+    """Get Playwright page connected to the Stagehand browser via CDP."""
+    global _playwright, _playwright_page, _cdp_url
+    
+    if _playwright_page is not None:
+        return _playwright_page
+    
+    # Ensure session is started
+    await _get_session()
+    
+    if not _cdp_url:
+        raise RuntimeError("No CDP URL available - session not started?")
+    
+    from playwright.async_api import async_playwright
+    
+    _playwright = await async_playwright().start()
+    browser = await _playwright.chromium.connect_over_cdp(_cdp_url)
+    
+    # Get the first page from the first context
+    contexts = browser.contexts
+    if contexts and contexts[0].pages:
+        _playwright_page = contexts[0].pages[0]
+    else:
+        raise RuntimeError("No pages found in Stagehand browser")
+    
+    return _playwright_page
+
+
+async def stagehand_screenshot_async(save_path: str = "", full_page: bool = False) -> str:
     """Take a screenshot of the current page.
+    
+    Uses Playwright connected to Stagehand's browser via CDP for screenshots.
     
     Args:
         save_path: Optional path to save the screenshot file
+        full_page: Capture full scrollable page (default: False)
     
     Returns:
         JSON with screenshot info
     """
     import base64
     
-    session_id = await _get_session()
-    
     try:
-        response = _stagehand_client.sessions.screenshot(
-            id=session_id,
-            full_page=False,
-        )
+        page = await _get_playwright_page()
+        screenshot = await page.screenshot(full_page=full_page)
         
-        screenshot_b64 = response.data.screenshot if hasattr(response.data, 'screenshot') else str(response.data)
+        b64 = base64.b64encode(screenshot).decode()
         
         result = {
             "status": "OK",
-            "screenshot_base64": screenshot_b64,
-            "size": len(base64.b64decode(screenshot_b64)) if screenshot_b64 else 0,
+            "url": page.url,
+            "screenshot_base64": b64,
+            "size": len(screenshot),
         }
         
-        if save_path and screenshot_b64:
+        if save_path:
             from pathlib import Path
-            Path(save_path).write_bytes(base64.b64decode(screenshot_b64))
+            Path(save_path).write_bytes(screenshot)
             result["saved_to"] = save_path
         
         return json.dumps(result, indent=2)
@@ -298,12 +330,20 @@ async def stagehand_close_async() -> str:
     Returns:
         JSON with close result
     """
-    global _stagehand_client, _session_id
+    global _stagehand_client, _session_id, _cdp_url, _playwright, _playwright_page
     
     try:
+        # Close Playwright connection first
+        if _playwright:
+            await _playwright.stop()
+            _playwright = None
+            _playwright_page = None
+        
+        # End Stagehand session
         if _session_id and _stagehand_client:
             _stagehand_client.sessions.end(id=_session_id)
             _session_id = None
+            _cdp_url = None
         
         if _stagehand_client:
             _stagehand_client.close()
