@@ -284,17 +284,23 @@ async def _get_playwright_page():
     return _playwright_page
 
 
-async def stagehand_screenshot_async(save_path: str = "", full_page: bool = False) -> str:
-    """Take a screenshot of the current page.
+async def stagehand_screenshot_async(
+    save_path: str = "",
+    full_page: bool = False,
+    describe: bool = True,
+) -> str:
+    """Take a screenshot of the current page and optionally describe it.
     
-    Uses Playwright connected to Stagehand's browser via CDP for screenshots.
+    Uses Playwright connected to Stagehand's browser via CDP for screenshots,
+    and Stagehand's AI to describe what's visible on the page.
     
     Args:
         save_path: Optional path to save the screenshot file
         full_page: Capture full scrollable page (default: False)
+        describe: Use AI to describe the page content (default: True)
     
     Returns:
-        JSON with screenshot info
+        JSON with screenshot info and description
     """
     import base64
     
@@ -307,7 +313,6 @@ async def stagehand_screenshot_async(save_path: str = "", full_page: bool = Fals
         result = {
             "status": "OK",
             "url": page.url,
-            "screenshot_base64": b64,
             "size": len(screenshot),
         }
         
@@ -315,6 +320,21 @@ async def stagehand_screenshot_async(save_path: str = "", full_page: bool = Fals
             from pathlib import Path
             Path(save_path).write_bytes(screenshot)
             result["saved_to"] = save_path
+        
+        # Get AI description of the page
+        if describe:
+            session_id = await _get_session()
+            try:
+                extract_response = _stagehand_client.sessions.extract(
+                    id=session_id,
+                    instruction="Describe what you see on this page: the layout, main content, any buttons/forms/modals visible, and the overall state of the page. Be concise but thorough.",
+                )
+                result["description"] = extract_response.data.result.get("extraction", str(extract_response.data.result))
+            except Exception as e:
+                result["description"] = f"(Could not describe: {e})"
+        
+        # Include base64 for potential multimodal use, but truncate in display
+        result["screenshot_base64"] = b64
         
         return json.dumps(result, indent=2)
     except Exception as e:
