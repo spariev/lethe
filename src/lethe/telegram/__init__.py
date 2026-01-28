@@ -110,8 +110,16 @@ class TelegramBot:
 
             if self.conversation_manager:
                 is_processing = self.conversation_manager.is_processing(message.chat.id)
+                is_debouncing = self.conversation_manager.is_debouncing(message.chat.id)
                 pending = self.conversation_manager.get_pending_count(message.chat.id)
-                status = "🔄 Processing" if is_processing else "✅ Ready"
+                
+                if is_processing:
+                    status = "🔄 Processing"
+                elif is_debouncing:
+                    status = f"⏳ Waiting for more messages ({self.conversation_manager.debounce_seconds}s)"
+                else:
+                    status = "✅ Ready"
+                
                 await message.answer(f"Status: {status}\nPending messages: {pending}")
             else:
                 await message.answer("Conversation manager not initialized.")

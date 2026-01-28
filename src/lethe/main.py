@@ -54,8 +54,8 @@ async def run():
     console.print()
 
     # Initialize conversation manager (replaces task queue for foreground)
-    conversation_manager = ConversationManager()
-    logger.info("Conversation manager initialized")
+    conversation_manager = ConversationManager(debounce_seconds=settings.debounce_seconds)
+    logger.info(f"Conversation manager initialized (debounce: {settings.debounce_seconds}s)")
     
     # Initialize background task manager
     task_db_path = settings.db_path.parent / "tasks.db"

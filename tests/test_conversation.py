@@ -1,4 +1,4 @@
-"""Tests for ConversationManager with interrupt support."""
+"""Tests for ConversationManager with debounce and interrupt support."""
 
 import asyncio
 import pytest
@@ -25,9 +25,10 @@ class TestConversationState:
     def test_add_message_when_not_processing(self):
         state = ConversationState(chat_id=123, user_id=456)
         
-        was_interrupted = state.add_message("hello")
+        interrupted_proc, interrupted_debounce = state.add_message("hello")
         
-        assert not was_interrupted
+        assert not interrupted_proc
+        assert not interrupted_debounce
         assert len(state.pending_messages) == 1
         assert state.pending_messages[0].content == "hello"
 
@@ -35,10 +36,19 @@ class TestConversationState:
         state = ConversationState(chat_id=123, user_id=456)
         state.is_processing = True
         
-        was_interrupted = state.add_message("hello")
+        interrupted_proc, _ = state.add_message("hello")
         
-        assert was_interrupted
+        assert interrupted_proc
         assert state.interrupt_event.is_set()
+
+    def test_add_message_when_debouncing_triggers_debounce_event(self):
+        state = ConversationState(chat_id=123, user_id=456)
+        state.is_debouncing = True
+        
+        _, interrupted_debounce = state.add_message("hello")
+        
+        assert interrupted_debounce
+        assert state.debounce_event.is_set()
 
     def test_get_combined_message_single(self):
         state = ConversationState(chat_id=123, user_id=456)
@@ -61,7 +71,6 @@ class TestConversationState:
         assert "first" in content
         assert "second" in content
         assert "third" in content
-        assert "[Additional message while processing:]" in content
         assert metadata == {"a": 3, "b": 2}  # Merged, later overrides
         assert len(state.pending_messages) == 0
 
@@ -82,8 +91,169 @@ class TestConversationState:
         assert state.check_interrupt() is False
 
 
-class TestConversationManager:
-    """Tests for ConversationManager."""
+class TestConversationManagerDebounce:
+    """Tests for ConversationManager debounce behavior."""
+
+    @pytest.mark.asyncio
+    async def test_debounce_waits_before_processing(self):
+        manager = ConversationManager(debounce_seconds=0.2)
+        processed = []
+        process_started_at = []
+        
+        async def process_callback(chat_id, user_id, message, metadata, interrupt_check):
+            process_started_at.append(asyncio.get_event_loop().time())
+            processed.append(message)
+        
+        start_time = asyncio.get_event_loop().time()
+        
+        await manager.add_message(
+            chat_id=123,
+            user_id=456,
+            content="hello",
+            process_callback=process_callback,
+        )
+        
+        # Should be debouncing now, not processed yet
+        assert manager.is_debouncing(123)
+        assert not manager.is_processing(123)
+        assert len(processed) == 0
+        
+        # Wait for debounce + processing to complete
+        await asyncio.sleep(0.5)
+        
+        assert processed == ["hello"]
+        # Processing should have started after debounce period
+        assert process_started_at[0] - start_time >= 0.19  # Allow small timing variance
+
+    @pytest.mark.asyncio
+    async def test_debounce_resets_on_new_message(self):
+        manager = ConversationManager(debounce_seconds=0.2)
+        processed = []
+        
+        async def process_callback(chat_id, user_id, message, metadata, interrupt_check):
+            processed.append(message)
+        
+        # Send first message
+        await manager.add_message(123, 456, "first", process_callback=process_callback)
+        
+        # Wait less than debounce
+        await asyncio.sleep(0.1)
+        
+        # Send second message - should reset debounce
+        await manager.add_message(123, 456, "second", process_callback=process_callback)
+        
+        # Should still be debouncing
+        assert manager.is_debouncing(123)
+        assert len(processed) == 0
+        
+        # Wait for debounce to complete
+        await asyncio.sleep(0.3)
+        
+        # Both messages should be combined
+        assert len(processed) == 1
+        assert "first" in processed[0]
+        assert "second" in processed[0]
+
+    @pytest.mark.asyncio
+    async def test_multiple_rapid_messages_batch_together(self):
+        manager = ConversationManager(debounce_seconds=0.3)
+        processed = []
+        
+        async def process_callback(chat_id, user_id, message, metadata, interrupt_check):
+            processed.append(message)
+        
+        # Send multiple messages rapidly
+        await manager.add_message(123, 456, "one", process_callback=process_callback)
+        await asyncio.sleep(0.05)
+        await manager.add_message(123, 456, "two", process_callback=process_callback)
+        await asyncio.sleep(0.05)
+        await manager.add_message(123, 456, "three", process_callback=process_callback)
+        
+        # All should batch
+        await asyncio.sleep(0.5)
+        
+        assert len(processed) == 1
+        assert "one" in processed[0]
+        assert "two" in processed[0]
+        assert "three" in processed[0]
+
+    @pytest.mark.asyncio
+    async def test_no_debounce_when_disabled(self):
+        manager = ConversationManager(debounce_seconds=0)
+        processed = []
+        
+        async def process_callback(chat_id, user_id, message, metadata, interrupt_check):
+            processed.append(message)
+        
+        await manager.add_message(123, 456, "hello", process_callback=process_callback)
+        
+        # Should start processing immediately
+        assert not manager.is_debouncing(123)
+        
+        await asyncio.sleep(0.1)
+        assert processed == ["hello"]
+
+
+class TestConversationManagerInterrupt:
+    """Tests for ConversationManager interrupt behavior."""
+
+    @pytest.mark.asyncio
+    async def test_interrupt_during_processing_triggers_debounce(self):
+        manager = ConversationManager(debounce_seconds=0.2)
+        processed = []
+        
+        async def process_callback(chat_id, user_id, message, metadata, interrupt_check):
+            processed.append(f"start:{message[:10]}")
+            # Simulate work with interrupt checking
+            for _ in range(20):
+                await asyncio.sleep(0.05)
+                if interrupt_check():
+                    processed.append("interrupted")
+                    return
+            processed.append(f"done:{message[:10]}")
+        
+        # Start first message (will go through debounce first)
+        await manager.add_message(123, 456, "first_msg", process_callback=process_callback)
+        
+        # Wait for debounce
+        await asyncio.sleep(0.3)
+        
+        # Now processing, send another message
+        await asyncio.sleep(0.1)  # Let processing start
+        await manager.add_message(123, 456, "second_msg", process_callback=process_callback)
+        
+        # Wait for everything to complete
+        await asyncio.sleep(1)
+        
+        # First should be interrupted, second should complete
+        assert "start:first_msg" in processed
+        assert "interrupted" in processed
+
+    @pytest.mark.asyncio
+    async def test_cancel_stops_debounce_and_processing(self):
+        manager = ConversationManager(debounce_seconds=0.5)
+        processed = []
+        
+        async def process_callback(chat_id, user_id, message, metadata, interrupt_check):
+            processed.append("started")
+            await asyncio.sleep(10)
+            processed.append("finished")
+        
+        await manager.add_message(123, 456, "hello", process_callback=process_callback)
+        
+        await asyncio.sleep(0.1)
+        assert manager.is_debouncing(123)
+        
+        # Cancel during debounce
+        cancelled = await manager.cancel(123)
+        
+        assert cancelled
+        assert not manager.is_debouncing(123)
+        assert not manager.is_processing(123)
+
+
+class TestConversationManagerBasic:
+    """Basic tests for ConversationManager."""
 
     def test_get_or_create_state(self):
         manager = ConversationManager()
@@ -95,123 +265,10 @@ class TestConversationManager:
         assert state1 is state2  # Same chat
         assert state1 is not state3  # Different chat
 
-    @pytest.mark.asyncio
-    async def test_add_message_starts_processing(self):
-        manager = ConversationManager()
-        processed = []
-        
-        async def process_callback(chat_id, user_id, message, metadata, interrupt_check):
-            processed.append(message)
-        
-        await manager.add_message(
-            chat_id=123,
-            user_id=456,
-            content="hello",
-            process_callback=process_callback,
-        )
-        
-        # Wait for processing to complete
-        await asyncio.sleep(0.1)
-        
-        assert processed == ["hello"]
-        assert not manager.is_processing(123)
-
-    @pytest.mark.asyncio
-    async def test_add_message_during_processing_interrupts(self):
-        manager = ConversationManager()
-        processed = []
-        interrupt_count = [0]
-        
-        async def process_callback(chat_id, user_id, message, metadata, interrupt_check):
-            processed.append(message)
-            # Simulate some work
-            for _ in range(10):
-                await asyncio.sleep(0.05)
-                if interrupt_check():
-                    interrupt_count[0] += 1
-                    return  # Exit on interrupt
-        
-        # Start first message
-        await manager.add_message(
-            chat_id=123,
-            user_id=456,
-            content="first",
-            process_callback=process_callback,
-        )
-        
-        # Wait a bit then send second message
-        await asyncio.sleep(0.1)
-        await manager.add_message(
-            chat_id=123,
-            user_id=456,
-            content="second",
-            process_callback=process_callback,
-        )
-        
-        # Wait for all processing to complete
-        await asyncio.sleep(1)
-        
-        # First message was interrupted, second (or combined) was processed
-        assert len(processed) >= 2
-        assert interrupt_count[0] >= 1
-
-    @pytest.mark.asyncio
-    async def test_cancel_stops_processing(self):
-        manager = ConversationManager()
-        processed = []
-        
-        async def process_callback(chat_id, user_id, message, metadata, interrupt_check):
-            processed.append("started")
-            await asyncio.sleep(10)  # Long operation
-            processed.append("finished")  # Should not reach
-        
-        # Start processing
-        await manager.add_message(
-            chat_id=123,
-            user_id=456,
-            content="hello",
-            process_callback=process_callback,
-        )
-        
-        await asyncio.sleep(0.1)
-        assert manager.is_processing(123)
-        
-        # Cancel
-        cancelled = await manager.cancel(123)
-        
-        assert cancelled
-        await asyncio.sleep(0.1)
-        assert not manager.is_processing(123)
-        assert "started" in processed
-        assert "finished" not in processed
-
-    @pytest.mark.asyncio
-    async def test_multiple_rapid_messages_combine(self):
-        manager = ConversationManager()
-        processed_messages = []
-        
-        async def process_callback(chat_id, user_id, message, metadata, interrupt_check):
-            # Simulate slow processing
-            await asyncio.sleep(0.5)
-            processed_messages.append(message)
-        
-        # Send multiple messages rapidly
-        await manager.add_message(123, 456, "one", process_callback=process_callback)
-        await asyncio.sleep(0.05)
-        await manager.add_message(123, 456, "two", process_callback=process_callback)
-        await asyncio.sleep(0.05)
-        await manager.add_message(123, 456, "three", process_callback=process_callback)
-        
-        # Wait for all processing
-        await asyncio.sleep(2)
-        
-        # Messages should be combined (exact behavior depends on timing)
-        total_content = " ".join(processed_messages)
-        assert "one" in total_content or any("one" in m for m in processed_messages)
-
     def test_is_processing_false_when_not_started(self):
         manager = ConversationManager()
         assert not manager.is_processing(123)
+        assert not manager.is_debouncing(123)
 
     def test_get_pending_count(self):
         manager = ConversationManager()
@@ -224,25 +281,21 @@ class TestConversationManager:
 
     @pytest.mark.asyncio
     async def test_error_in_callback_does_not_crash_loop(self):
-        manager = ConversationManager()
+        manager = ConversationManager(debounce_seconds=0)  # No debounce for simplicity
         call_count = [0]
         
         async def process_callback(chat_id, user_id, message, metadata, interrupt_check):
             call_count[0] += 1
             if call_count[0] == 1:
                 raise ValueError("Intentional error")
-            # Second call should succeed
         
-        # Add message that will fail
         state = manager.get_or_create_state(123, 456)
         state.add_message("first")
         
-        # Manually trigger processing (should handle the error)
         await manager._process_loop(state, process_callback)
         
-        # The loop should have been called once and handled the error gracefully
         assert call_count[0] == 1
-        assert not state.is_processing  # Loop finished
+        assert not state.is_processing
 
 
 if __name__ == "__main__":

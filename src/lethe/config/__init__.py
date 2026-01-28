@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     hippocampus_agent_name: str = Field(default="lethe-hippocampus", description="Hippocampus agent name")
     hippocampus_model: str = Field(default="anthropic/claude-haiku-4-5-20251001", description="Cheap/fast model for hippocampus")
 
+    # Conversation
+    debounce_seconds: float = Field(default=5.0, description="Wait time for additional messages before processing (0 to disable)")
+
     # Database
     db_path: Path = Field(default=Path("./data/lethe.db"), description="SQLite database path")
 
