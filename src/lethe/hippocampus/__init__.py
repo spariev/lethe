@@ -288,9 +288,24 @@ JSON only:"""
                 # Skip very short results
                 if len(content.strip()) < 20:
                     continue
+                
+                # Get timestamp if available
+                timestamp = ""
+                if hasattr(msg, 'created_at') and msg.created_at:
+                    try:
+                        from datetime import datetime
+                        if isinstance(msg.created_at, datetime):
+                            timestamp = msg.created_at.strftime("%Y-%m-%d %H:%M")
+                        else:
+                            timestamp = str(msg.created_at)[:16]  # "2024-01-30T14:30"
+                    except:
+                        pass
                     
                 role = getattr(msg, 'message_type', 'message').replace('_message', '')
-                results.append(f"[{role}] {content}")
+                if timestamp:
+                    results.append(f"[{timestamp}] [{role}] {content}")
+                else:
+                    results.append(f"[{role}] {content}")
                     
         except Exception as e:
             logger.warning(f"Conversation search failed: {e}")
@@ -451,32 +466,41 @@ SUMMARY (be concise but preserve key details):"""
             if not agent_response:
                 return {"send_to_user": False, "continue_task": False, "reason": "no response late iteration"}
             
-            prompt = f"""USER REQUEST:
+            from datetime import datetime, timezone
+            current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            
+            prompt = f"""CURRENT DATE/TIME: {current_time}
+
+USER REQUEST:
 {original_request}
 
 AGENT'S LATEST RESPONSE:
 {agent_response}
 
 ITERATION: {iteration}
-IS_CONTINUATION_RESPONSE: {is_continuation}
 
 Judge this response:
 
 1. SEND_TO_USER: Should this response be shown to the user?
-   - YES if: agent is talking TO the user (direct address, "you", "your", answers, confirmations)
-   - NO if: agent is talking ABOUT the user in third person (using their name instead of "you") - this is internal reflection
-   - NO if: meta-commentary about the task itself, thinking out loud
+   - YES if: agent is talking TO the user (answers, confirmations, asking questions)
+   - NO if: internal reflection, meta-commentary, thinking out loud
 
 2. CONTINUE_TASK: Should the agent continue working?
-   - YES if: agent expressed clear intent to do more AND task is obviously incomplete
-   - NO if: action completed, natural stopping point, or nothing more to do
-   - NO if: send_to_user is false (if we're not sending the response, there's no point continuing)
+   - YES ONLY if: agent has a SPECIFIC, CURRENT task that is clearly incomplete
+   - NO if: task completed, nothing more to do, or agent said it's done
+   - NO if: the "incomplete task" is from RECALLED MEMORIES (check timestamps!)
 
-IMPORTANT: If the response shouldn't be sent to user, almost always set continue_task=false too.
-The only exception is during active tool execution where agent is working but hasn't reported yet.
+CRITICAL - Recalled memories vs current tasks:
+- Text inside [Memory recall]...[End of recall] is HISTORICAL CONTEXT
+- Timestamps like [2024-01-25 10:30] indicate WHEN something happened
+- If a "task" is from days/hours ago, it's NOT a current task - ignore it
+- Only consider tasks the user EXPLICITLY requested in THIS message
+
+If continue_task=true, you MUST specify exactly what to continue in "continue_with".
+If you can't name a specific current task, set continue_task=false.
 
 Respond with JSON only:
-{{"send_to_user": true/false, "continue_task": true/false, "reason": "brief explanation"}}"""
+{{"send_to_user": true/false, "continue_task": true/false, "continue_with": "specific task or null", "reason": "brief explanation"}}"""
 
             response = await self.client.agents.messages.create(
                 agent_id=agent_id,
