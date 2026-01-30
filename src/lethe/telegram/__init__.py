@@ -308,7 +308,8 @@ class TelegramBot:
                     
             except Exception as e:
                 logger.exception(f"Model command error: {e}")
-                await message.answer(f"Error: {e}")
+                error_msg = str(e)[:200].replace('_', ' ')  # Truncate and escape underscores
+                await message.answer(f"Error: {error_msg}", parse_mode=None)
 
         @self.dp.message(F.photo)
         async def handle_photo(message: Message):
