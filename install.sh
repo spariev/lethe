@@ -100,6 +100,95 @@ check_command() {
     command -v "$1" >/dev/null 2>&1
 }
 
+is_root() {
+    [[ "$(id -u)" -eq 0 ]]
+}
+
+maybe_sudo() {
+    if is_root; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
+install_homebrew() {
+    if check_command brew; then
+        success "Homebrew found"
+        return 0
+    fi
+    
+    info "Installing Homebrew..."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    
+    # Add to PATH for this session
+    if [[ -f "/opt/homebrew/bin/brew" ]]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [[ -f "/usr/local/bin/brew" ]]; then
+        eval "$(/usr/local/bin/brew shellenv)"
+    elif [[ -f "/home/linuxbrew/.linuxbrew/bin/brew" ]]; then
+        eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+    fi
+    success "Homebrew installed"
+}
+
+install_git() {
+    if check_command git; then
+        success "git found"
+        return 0
+    fi
+    
+    info "Installing git..."
+    OS=$(detect_os)
+    
+    if [[ "$OS" == "mac" ]]; then
+        install_homebrew
+        brew install git
+    elif [[ "$OS" == "linux" ]] || [[ "$OS" == "wsl" ]]; then
+        if check_command apt-get; then
+            maybe_sudo apt-get update -y
+            maybe_sudo apt-get install -y git
+        elif check_command dnf; then
+            maybe_sudo dnf install -y git
+        elif check_command yum; then
+            maybe_sudo yum install -y git
+        elif check_command pacman; then
+            maybe_sudo pacman -S --noconfirm git
+        else
+            # Fallback to Linuxbrew
+            install_homebrew
+            brew install git
+        fi
+    fi
+    success "git installed"
+}
+
+install_curl() {
+    if check_command curl; then
+        return 0
+    fi
+    
+    info "Installing curl..."
+    OS=$(detect_os)
+    
+    if [[ "$OS" == "mac" ]]; then
+        install_homebrew
+        brew install curl
+    elif [[ "$OS" == "linux" ]] || [[ "$OS" == "wsl" ]]; then
+        if check_command apt-get; then
+            maybe_sudo apt-get update -y
+            maybe_sudo apt-get install -y curl
+        elif check_command dnf; then
+            maybe_sudo dnf install -y curl
+        elif check_command yum; then
+            maybe_sudo yum install -y curl
+        elif check_command pacman; then
+            maybe_sudo pacman -S --noconfirm curl
+        fi
+    fi
+    success "curl installed"
+}
+
 # Detect container runtime
 detect_container_runtime() {
     if check_command podman; then
@@ -142,22 +231,19 @@ install_native() {
     OS=$(detect_os)
     info "Detected OS: $OS"
     
-    # Check prerequisites
-    info "Checking prerequisites..."
+    # Install dependencies if missing
+    info "Checking dependencies..."
     
-    if ! check_command git; then
-        error "git is required. Please install it first."
-    fi
-    success "git found"
+    install_curl
+    install_git
     
-    # Install uv if needed (uv can manage Python versions)
+    # Install uv (manages Python versions too)
     if ! check_command uv; then
         info "Installing uv (Python package manager)..."
         curl -LsSf https://astral.sh/uv/install.sh | sh
         export PATH="$HOME/.local/bin:$PATH"
-        # Verify installation
         if ! check_command uv; then
-            export PATH="$HOME/.cargo/bin:$PATH"  # Alternative location
+            export PATH="$HOME/.cargo/bin:$PATH"
         fi
     fi
     success "uv found"
