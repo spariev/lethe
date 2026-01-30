@@ -241,6 +241,66 @@ class TelegramBot:
             else:
                 await message.answer("Failed to stop task.")
 
+        @self.dp.message(Command("model"))
+        async def handle_model(message: Message):
+            """Handle /model command.
+            
+            /model - Show available models and current model
+            /model <name> - Switch to a different model
+            """
+            if not self._is_authorized(message.from_user.id):
+                return
+
+            if not self.agent_manager:
+                await message.answer("Agent manager not initialized.")
+                return
+
+            args = message.text.split(maxsplit=1)
+            new_model = args[1].strip() if len(args) > 1 else None
+
+            try:
+                client = self.agent_manager.client
+                agent_id = await self.agent_manager.get_or_create_agent()
+                agent = await client.agents.retrieve(agent_id)
+                current_model = agent.model
+
+                if new_model:
+                    # Switch model
+                    await client.agents.update(agent_id, model=new_model)
+                    await message.answer(f"✅ Model switched to: `{new_model}`", parse_mode="Markdown")
+                    logger.info(f"Model switched from {current_model} to {new_model}")
+                else:
+                    # List models
+                    models = await client.models.list()
+                    
+                    # Group by provider
+                    by_provider = {}
+                    async for model in models if hasattr(models, '__aiter__') else iter(models):
+                        provider = getattr(model, 'provider_type', 'unknown')
+                        if provider not in by_provider:
+                            by_provider[provider] = []
+                        by_provider[provider].append(model)
+                    
+                    lines = [f"**Current model:** `{current_model}`\n"]
+                    lines.append("**Available models:**\n")
+                    
+                    for provider in sorted(by_provider.keys()):
+                        lines.append(f"*{provider}:*")
+                        for m in sorted(by_provider[provider], key=lambda x: x.model)[:10]:
+                            marker = "→ " if m.model == current_model else "  "
+                            ctx = f" ({m.max_context_window//1000}k)" if hasattr(m, 'max_context_window') and m.max_context_window else ""
+                            lines.append(f"`{marker}{m.model}`{ctx}")
+                        if len(by_provider[provider]) > 10:
+                            lines.append(f"  ... and {len(by_provider[provider]) - 10} more")
+                        lines.append("")
+                    
+                    lines.append("Use `/model <name>` to switch.")
+                    await message.answer("\n".join(lines), parse_mode="Markdown")
+                    
+            except Exception as e:
+                logger.exception(f"Model command error: {e}")
+                await message.answer(f"Error: {e}")
+
         @self.dp.message(F.photo)
         async def handle_photo(message: Message):
             """Handle photo messages."""
