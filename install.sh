@@ -424,10 +424,9 @@ Or Podman: https://podman.io/getting-started/installation"
     fi
     success "Container runtime: $RUNTIME"
     
-    # Create directories
+    # Create config directory (volumes are managed by container runtime)
     mkdir -p "$CONFIG_DIR"
-    mkdir -p "$INSTALL_DIR/workspace"
-    mkdir -p "$INSTALL_DIR/data"
+    mkdir -p "$INSTALL_DIR"
     
     # Prompt for tokens
     prompt_tokens
@@ -478,15 +477,15 @@ EOF
     $RUNTIME build -t lethe:latest "$INSTALL_DIR"
     success "Container built"
     
-    # Create run script
+    # Create run script (use named volumes - no SELinux issues)
     cat > "$INSTALL_DIR/run-lethe.sh" << EOF
 #!/bin/bash
 $RUNTIME run -d \\
     --name lethe \\
     --restart unless-stopped \\
     --env-file "$CONFIG_DIR/.env" \\
-    -v "$INSTALL_DIR/workspace:/app/workspace:Z" \\
-    -v "$INSTALL_DIR/data:/app/data:Z" \\
+    -v lethe-workspace:/app/workspace \\
+    -v lethe-data:/app/data \\
     lethe:latest
 EOF
     chmod +x "$INSTALL_DIR/run-lethe.sh"
@@ -505,11 +504,8 @@ EOF
     echo "  Logs:    $RUNTIME logs -f lethe"
     echo "  Shell:   $RUNTIME exec -it lethe bash"
     echo ""
-    echo "The container has access to:"
-    echo "  - $INSTALL_DIR/workspace (read/write)"
-    echo "  - $INSTALL_DIR/data (databases)"
-    echo ""
-    echo "It does NOT have access to your home directory or system files."
+    echo "Data is stored in container volumes (lethe-workspace, lethe-data)."
+    echo "The container does NOT have access to your home directory or system files."
 }
 
 # Main
