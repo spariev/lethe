@@ -264,8 +264,10 @@ class AgentManager:
         if agents:
             self._agent_id = agents[0].id
             logger.info(f"Found existing agent: {self._agent_id}")
-            # Clear any stale pending approvals from previous sessions
-            await self.clear_pending_approvals(self._agent_id)
+            # Setup tool handlers first (needed for _ensure_agent_ready)
+            self._setup_tool_handlers()
+            # Clear any stale pending approvals by executing them
+            await self._ensure_agent_ready(self._agent_id)
             # Sync tools - attach any missing tools
             await self._sync_agent_tools(self._agent_id)
             return self._agent_id
