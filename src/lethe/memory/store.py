@@ -71,8 +71,8 @@ class MemoryStore:
                     
                 label = block["label"]
                 value = block["value"] or ""
-                description = block.get("description", "")
-                limit = block.get("limit", 20000)
+                description = block.get("description") or ""
+                limit = block.get("limit") or 20000
                 
                 block_lines.append(f"<{label}>")
                 block_lines.append("<description>")
