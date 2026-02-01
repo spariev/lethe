@@ -72,11 +72,14 @@ async def run():
         await telegram_bot.start_typing(chat_id)
         
         try:
-            # Callback for intermediate messages (optional)
+            # Callback for intermediate messages (tool reasoning, updates)
             async def on_intermediate(content: str):
-                if content and len(content) > 10:
-                    # Could send intermediate updates here
-                    pass
+                """Send intermediate updates while agent is working."""
+                if content and len(content) > 20:
+                    # Check for interrupt before sending
+                    if interrupt_check():
+                        return
+                    await telegram_bot.send_message(chat_id, f"💭 {content}")
             
             # Get response from agent
             response = await agent.chat(message, on_message=on_intermediate)
