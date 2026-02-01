@@ -1,77 +1,60 @@
 """Memory blocks - Core memory that's always in context.
 
-Similar to Letta's memory blocks but simpler and local.
+Blocks are stored as simple text files in a directory.
+Each file is named after the block label (e.g., persona.md, human.md).
+Metadata is stored in a companion .meta.json file.
 """
 
 import json
 from datetime import datetime, timezone
 from typing import Optional
 from pathlib import Path
-import uuid
-
-import lancedb
 import logging
 
 logger = logging.getLogger(__name__)
 
-
-# Default block schema
-BLOCK_SCHEMA = {
-    "id": str,
-    "label": str,
-    "value": str,
-    "description": str,
-    "limit": int,
-    "read_only": bool,
-    "hidden": bool,
-    "created_at": str,
-    "updated_at": str,
-}
-
-DEFAULT_LIMIT = 20000  # Characters (increased for migration)
+DEFAULT_LIMIT = 20000  # Characters
 
 
 class BlockManager:
-    """Manages memory blocks (core memory).
+    """Manages memory blocks (core memory) as files.
     
     Blocks are key-value pairs that are always included in the LLM context.
-    Examples: persona, human, project, system
+    Each block is a .md file with optional .meta.json for metadata.
     """
     
-    TABLE_NAME = "memory_blocks"
-    
-    def __init__(self, db: lancedb.DBConnection):
+    def __init__(self, blocks_dir: str | Path):
         """Initialize block manager.
         
         Args:
-            db: LanceDB connection
+            blocks_dir: Directory containing block files
         """
-        self.db = db
-        self._ensure_table()
+        self.blocks_dir = Path(blocks_dir)
+        self.blocks_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Block manager initialized at {self.blocks_dir}")
     
-    def _ensure_table(self):
-        """Create table if it doesn't exist."""
-        if self.TABLE_NAME not in self.db.table_names():
-            # Create with empty initial data
-            self.db.create_table(
-                self.TABLE_NAME,
-                data=[{
-                    "id": "_init_",
-                    "label": "_init_",
-                    "value": "",
-                    "description": "",
-                    "limit": DEFAULT_LIMIT,
-                    "read_only": False,
-                    "hidden": True,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }]
-            )
-            logger.info(f"Created table {self.TABLE_NAME}")
+    def _block_path(self, label: str) -> Path:
+        """Get path to block file."""
+        return self.blocks_dir / f"{label}.md"
     
-    def _get_table(self):
-        """Get the blocks table."""
-        return self.db.open_table(self.TABLE_NAME)
+    def _meta_path(self, label: str) -> Path:
+        """Get path to metadata file."""
+        return self.blocks_dir / f"{label}.meta.json"
+    
+    def _load_meta(self, label: str) -> dict:
+        """Load metadata for a block."""
+        meta_path = self._meta_path(label)
+        if meta_path.exists():
+            try:
+                return json.loads(meta_path.read_text())
+            except Exception:
+                pass
+        return {}
+    
+    def _save_meta(self, label: str, meta: dict):
+        """Save metadata for a block."""
+        meta_path = self._meta_path(label)
+        meta_path.write_text(json.dumps(meta, indent=2))
     
     def create(
         self,
@@ -93,47 +76,42 @@ class BlockManager:
             hidden: Whether block is hidden from context
             
         Returns:
-            Block ID
+            Block label
         """
-        # Check if block with label exists
-        existing = self.get_by_label(label)
-        if existing:
-            raise ValueError(f"Block with label '{label}' already exists")
+        block_path = self._block_path(label)
+        if block_path.exists():
+            raise ValueError(f"Block '{label}' already exists")
         
         if len(value) > limit:
             raise ValueError(f"Value length ({len(value)}) exceeds limit ({limit})")
         
-        block_id = f"block-{uuid.uuid4()}"
-        now = datetime.now(timezone.utc).isoformat()
+        # Write content
+        block_path.write_text(value)
         
-        table = self._get_table()
-        table.add([{
-            "id": block_id,
-            "label": label,
-            "value": value,
+        # Write metadata
+        now = datetime.now(timezone.utc).isoformat()
+        self._save_meta(label, {
             "description": description,
             "limit": limit,
             "read_only": read_only,
             "hidden": hidden,
             "created_at": now,
             "updated_at": now,
-        }])
+        })
         
-        logger.info(f"Created block '{label}' ({block_id})")
-        return block_id
+        logger.info(f"Created block '{label}'")
+        return label
     
-    def get(self, block_id: str) -> Optional[dict]:
-        """Get a block by ID.
+    def get(self, label: str) -> Optional[dict]:
+        """Get a block by label.
         
         Args:
-            block_id: Block ID
+            label: Block label
             
         Returns:
             Block dict or None
         """
-        table = self._get_table()
-        results = table.search().where(f"id = '{block_id}'").limit(1).to_list()
-        return results[0] if results else None
+        return self.get_by_label(label)
     
     def get_by_label(self, label: str) -> Optional[dict]:
         """Get a block by label.
@@ -144,9 +122,23 @@ class BlockManager:
         Returns:
             Block dict or None
         """
-        table = self._get_table()
-        results = table.search().where(f"label = '{label}'").limit(1).to_list()
-        return results[0] if results else None
+        block_path = self._block_path(label)
+        if not block_path.exists():
+            return None
+        
+        value = block_path.read_text()
+        meta = self._load_meta(label)
+        
+        return {
+            "label": label,
+            "value": value,
+            "description": meta.get("description", ""),
+            "limit": meta.get("limit", DEFAULT_LIMIT),
+            "read_only": meta.get("read_only", False),
+            "hidden": meta.get("hidden", False),
+            "created_at": meta.get("created_at", ""),
+            "updated_at": meta.get("updated_at", ""),
+        }
     
     def update(
         self,
@@ -164,29 +156,28 @@ class BlockManager:
         Returns:
             True if updated
         """
-        block = self.get_by_label(label)
-        if not block:
+        block_path = self._block_path(label)
+        if not block_path.exists():
             return False
         
-        if block.get("read_only") and value is not None:
+        meta = self._load_meta(label)
+        
+        if meta.get("read_only") and value is not None:
             raise ValueError(f"Block '{label}' is read-only")
         
-        if value is not None and len(value) > block["limit"]:
-            raise ValueError(f"Value length ({len(value)}) exceeds limit ({block['limit']})")
+        limit = meta.get("limit", DEFAULT_LIMIT)
+        if value is not None and len(value) > limit:
+            raise ValueError(f"Value length ({len(value)}) exceeds limit ({limit})")
         
-        # Build update
-        updates = {"updated_at": datetime.now(timezone.utc).isoformat()}
+        # Update content
         if value is not None:
-            updates["value"] = value
+            block_path.write_text(value)
+        
+        # Update metadata
+        meta["updated_at"] = datetime.now(timezone.utc).isoformat()
         if description is not None:
-            updates["description"] = description
-        
-        # LanceDB update via delete + add
-        table = self._get_table()
-        table.delete(f"id = '{block['id']}'")
-        
-        updated_block = {**block, **updates}
-        table.add([updated_block])
+            meta["description"] = description
+        self._save_meta(label, meta)
         
         logger.debug(f"Updated block '{label}'")
         return True
@@ -200,12 +191,15 @@ class BlockManager:
         Returns:
             True if deleted
         """
-        block = self.get_by_label(label)
-        if not block:
+        block_path = self._block_path(label)
+        meta_path = self._meta_path(label)
+        
+        if not block_path.exists():
             return False
         
-        table = self._get_table()
-        table.delete(f"id = '{block['id']}'")
+        block_path.unlink()
+        if meta_path.exists():
+            meta_path.unlink()
         
         logger.info(f"Deleted block '{label}'")
         return True
@@ -219,22 +213,19 @@ class BlockManager:
         Returns:
             List of blocks
         """
-        table = self._get_table()
-        results = table.search().limit(1000).to_list()
-        
-        # Filter out init block and optionally hidden
         blocks = []
-        for block in results:
-            if block["label"] == "_init_":
-                continue
-            if not include_hidden and block.get("hidden"):
-                continue
-            blocks.append(block)
+        for block_path in self.blocks_dir.glob("*.md"):
+            label = block_path.stem
+            block = self.get_by_label(label)
+            if block:
+                if not include_hidden and block.get("hidden"):
+                    continue
+                blocks.append(block)
         
         return sorted(blocks, key=lambda b: b["label"])
     
     def str_replace(self, label: str, old_str: str, new_str: str) -> bool:
-        """Replace text in a block (like Letta's core_memory_replace).
+        """Replace text in a block.
         
         Args:
             label: Block label

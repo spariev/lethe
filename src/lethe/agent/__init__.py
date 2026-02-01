@@ -263,13 +263,17 @@ class Agent:
         ]
         
         for label, description, default_value in defaults:
-            if not self.memory.blocks.get_by_label(label):
-                self.memory.blocks.create(
-                    label=label,
-                    value=default_value,
-                    description=description,
-                )
-                logger.info(f"Created default block: {label}")
+            try:
+                if not self.memory.blocks.get_by_label(label):
+                    self.memory.blocks.create(
+                        label=label,
+                        value=default_value,
+                        description=description,
+                    )
+                    logger.info(f"Created default block: {label}")
+            except ValueError:
+                # Block already exists
+                pass
         
         # Refresh LLM context
         self.llm.update_memory_context(self.memory.get_context_for_prompt())

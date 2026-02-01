@@ -14,12 +14,12 @@ from lethe.memory.messages import MessageHistory
 
 
 class MemoryStore:
-    """Unified memory store using LanceDB.
+    """Unified memory store.
     
     Provides:
-    - blocks: Core memory (persona, human, project, etc.)
-    - archival: Long-term semantic memory with hybrid search
-    - messages: Conversation history
+    - blocks: Core memory as files (persona.md, human.md, project.md, etc.)
+    - archival: Long-term semantic memory with hybrid search (LanceDB)
+    - messages: Conversation history (LanceDB)
     """
     
     def __init__(self, data_dir: str = "data/memory"):
@@ -31,12 +31,13 @@ class MemoryStore:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         
-        # Connect to LanceDB
+        # Connect to LanceDB (for archival and messages only)
         self.db = lancedb.connect(str(self.data_dir / "lancedb"))
         logger.info(f"Connected to LanceDB at {self.data_dir / 'lancedb'}")
         
         # Initialize subsystems
-        self.blocks = BlockManager(self.db)
+        # Blocks are now files in data_dir/blocks/
+        self.blocks = BlockManager(self.data_dir / "blocks")
         self.archival = ArchivalMemory(self.db)
         self.messages = MessageHistory(self.db)
         
