@@ -34,6 +34,12 @@ from lethe.tools.browser_agent import (
     browser_fill_async as browser_fill,
 )
 
+from lethe.tools.web_search import (
+    web_search,
+    fetch_webpage,
+    is_available as web_search_available,
+)
+
 
 def _python_type_to_json(py_type) -> str:
     """Convert Python type to JSON schema type."""
@@ -154,6 +160,10 @@ def get_all_tools() -> list[tuple[Callable, dict]]:
         (browser_snapshot, "browser_snapshot"),
         (browser_click, "browser_click"),
         (browser_fill, "browser_fill"),
+        
+        # Web search (optional - only if EXA_API_KEY is set)
+        (web_search, None),
+        (fetch_webpage, None),
     ]
     
     result = []
@@ -182,6 +192,9 @@ def get_tool_by_name(name: str) -> Optional[Callable]:
         "browser_snapshot": browser_snapshot,
         "browser_click": browser_click,
         "browser_fill": browser_fill,
+        # Web search
+        "web_search": web_search,
+        "fetch_webpage": fetch_webpage,
     }
     return tools.get(name)
 
@@ -210,4 +223,8 @@ __all__ = [
     "browser_snapshot",
     "browser_click",
     "browser_fill",
+    # Web search
+    "web_search",
+    "fetch_webpage",
+    "web_search_available",
 ]

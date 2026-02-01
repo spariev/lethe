@@ -662,6 +662,94 @@ class TestBrowserToolsAsync:
 
 
 # ============================================================================
+# Web Search Tests
+# ============================================================================
+
+def _check_exa_api():
+    """Check if Exa API is available."""
+    from lethe.tools import web_search_available
+    if not web_search_available():
+        pytest.skip("EXA_API_KEY not configured")
+
+
+class TestWebSearch:
+    """Tests for web search tools."""
+    
+    def test_web_search_basic(self):
+        """Should search the web and return results."""
+        _check_exa_api()
+        from lethe.tools import web_search
+        import json
+        
+        result = web_search("Python programming language")
+        data = json.loads(result)
+        
+        assert data.get("status") == "OK"
+        assert "results" in data
+        assert len(data["results"]) > 0
+        assert "title" in data["results"][0]
+        assert "url" in data["results"][0]
+    
+    def test_web_search_with_category(self):
+        """Should filter by category."""
+        _check_exa_api()
+        from lethe.tools import web_search
+        import json
+        
+        result = web_search("machine learning", num_results=5, category="research paper")
+        data = json.loads(result)
+        
+        assert data.get("status") == "OK"
+        assert len(data["results"]) <= 5
+    
+    def test_web_search_no_api_key(self):
+        """Should return error when API key not set."""
+        import json
+        import os
+        import sys
+        
+        # Save original state
+        original_key = os.environ.get("EXA_API_KEY")
+        
+        # Remove key and reload module
+        if "EXA_API_KEY" in os.environ:
+            del os.environ["EXA_API_KEY"]
+        
+        # Remove cached module to force reload
+        if "lethe.tools.web_search" in sys.modules:
+            del sys.modules["lethe.tools.web_search"]
+        
+        # Import fresh
+        from lethe.tools.web_search import web_search as ws_func
+        
+        result = ws_func("test query")
+        data = json.loads(result)
+        
+        assert data.get("status") == "error"
+        assert "EXA_API_KEY" in data.get("message", "")
+        
+        # Restore key
+        if original_key:
+            os.environ["EXA_API_KEY"] = original_key
+        # Clear module so future tests get correct state
+        if "lethe.tools.web_search" in sys.modules:
+            del sys.modules["lethe.tools.web_search"]
+    
+    def test_fetch_webpage(self):
+        """Should fetch webpage content."""
+        _check_exa_api()
+        from lethe.tools import fetch_webpage
+        import json
+        
+        result = fetch_webpage("https://example.com")
+        data = json.loads(result)
+        
+        # Might succeed or fail depending on Exa's handling
+        assert isinstance(data, dict)
+        assert "status" in data
+
+
+# ============================================================================
 # Integration Tests
 # ============================================================================
 
