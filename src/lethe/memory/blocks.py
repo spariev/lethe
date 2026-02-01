@@ -28,7 +28,7 @@ BLOCK_SCHEMA = {
     "updated_at": str,
 }
 
-DEFAULT_LIMIT = 5000  # Characters
+DEFAULT_LIMIT = 20000  # Characters (increased for migration)
 
 
 class BlockManager:
