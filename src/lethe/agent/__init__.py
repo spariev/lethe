@@ -1161,50 +1161,90 @@ I'll update this as I learn about my principal's current projects and priorities
             if missing_rules:
                 logger.info(f"Added approval rules for client-side tools: {missing_rules}")
 
-    async def _recover_from_pending_approval(self, agent_id: str, original_messages: list, error_str: str = "", max_retries: int = 3):
-        """Recover from a stuck pending approval state by denying it and retrying.
+    async def _recover_from_pending_approval(self, agent_id: str, original_messages: list, error_str: str = "", max_retries: int = 10):
+        """Recover from pending approval by EXECUTING the pending tool call (not denying).
         
-        May retry multiple times if the agent keeps creating new tool calls.
+        When we hit PENDING_APPROVAL, the agent wants to make a tool call. Instead of
+        denying and causing cascades, we execute the tool and continue.
         """
         import re
+        import json
         
         for attempt in range(max_retries):
-            # Try to extract pending_request_id from error message
-            pending_request_id = None
-            if error_str:
-                match = re.search(r"'pending_request_id':\s*'(message-[a-f0-9-]+)'", error_str)
-                if match:
-                    pending_request_id = match.group(1)
+            # Get the pending approval from agent state
+            agent = await self.client.agents.retrieve(agent_id)
+            message_ids = getattr(agent, "message_ids", None) or []
             
-            if pending_request_id:
-                logger.info(f"Found pending request: {pending_request_id}, trying to clear via clear_pending_approvals (attempt {attempt + 1})")
+            if not message_ids:
+                logger.warning("No message_ids found, cannot recover")
+                break
             
-            # Use clear_pending_approvals which handles the proper format
-            cleared = await self.clear_pending_approvals(agent_id)
+            # Get the last message (should be approval_request_message)
+            last_msg = await self.client.messages.retrieve(message_ids[-1])
             
-            if not cleared:
-                # Could not clear - check if agent still has pending approvals
-                agent = await self.client.agents.retrieve(agent_id)
-                message_ids = getattr(agent, "message_ids", None) or []
-                if message_ids:
-                    last_msg = await self.client.messages.retrieve(message_ids[-1])
-                    if getattr(last_msg, "message_type", None) == "approval_request_message":
-                        raise RuntimeError("Failed to clear pending approval - agent still waiting for approval")
+            if getattr(last_msg, "message_type", None) != "approval_request_message":
+                logger.info(f"No pending approval (last message type: {getattr(last_msg, 'message_type', 'unknown')})")
+                break
             
-            # Retry the original message
+            # Get tool call details
+            tool_call = getattr(last_msg, "tool_call", None)
+            if not tool_call:
+                logger.warning("Approval request has no tool_call")
+                break
+            
+            tool_name = tool_call.name
+            tool_call_id = tool_call.tool_call_id
+            tool_args = json.loads(tool_call.arguments) if tool_call.arguments else {}
+            
+            logger.info(f"Executing pending tool: {tool_name}({tool_args}) (attempt {attempt + 1})")
+            
+            # Execute the tool locally
+            result, status, image_attachment = await self._execute_tool_locally(tool_name, tool_args)
+            
+            logger.info(f"  Tool result ({status}): {result[:100]}..." if len(result) > 100 else f"  Tool result ({status}): {result}")
+            
+            # Send tool result back to agent
             try:
-                return await self.client.agents.messages.create(
+                response = await self.client.agents.messages.create(
                     agent_id=agent_id,
-                    messages=original_messages,
+                    messages=[{
+                        "type": "approval",
+                        "approvals": [{
+                            "type": "tool",
+                            "tool_call_id": tool_call_id,
+                            "tool_return": result,
+                            "status": status,
+                        }],
+                    }],
                 )
+                
+                # Check if agent wants to make more tool calls
+                stop_reason_obj = getattr(response, "stop_reason", None)
+                if hasattr(stop_reason_obj, "stop_reason"):
+                    stop_reason = stop_reason_obj.stop_reason
+                else:
+                    stop_reason = str(stop_reason_obj) if stop_reason_obj else None
+                
+                if stop_reason != "requires_approval":
+                    # Agent is done with tool calls, we can now send the original message
+                    logger.info(f"Pending approval cleared (stop_reason={stop_reason}), retrying original message")
+                    break
+                else:
+                    logger.info("Agent made another tool call, continuing to execute...")
+                    continue
+                    
             except Exception as e:
                 error_str = str(e)
-                if "PENDING_APPROVAL" in error_str and attempt < max_retries - 1:
-                    logger.warning(f"Retry {attempt + 1} also hit PENDING_APPROVAL, trying again...")
+                if "Invalid tool call IDs" in error_str:
+                    logger.warning("Tool call ID changed, retrying with fresh state...")
                     continue
                 raise
         
-        raise RuntimeError(f"Failed to recover after {max_retries} attempts - agent keeps creating pending approvals")
+        # Now retry the original message
+        return await self.client.agents.messages.create(
+            agent_id=agent_id,
+            messages=original_messages,
+        )
 
     async def _execute_tool_locally(self, tool_name: str, arguments: dict) -> tuple[str, str, Optional[dict]]:
         """Execute a tool locally and return (result, status, image_attachment).
