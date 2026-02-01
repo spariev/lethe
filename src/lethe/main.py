@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import signal
 import sys
 
@@ -120,6 +121,8 @@ async def run():
     def signal_handler():
         logger.info("Received shutdown signal...")
         shutdown_event.set()
+        # Schedule force exit if graceful shutdown takes too long
+        loop.call_later(3, lambda: os._exit(0))
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -137,13 +140,14 @@ async def run():
     finally:
         console.print("\n[yellow]Shutting down...[/yellow]")
         
-        # Shutdown with timeout to avoid hanging
+        # Shutdown with timeout to avoid hanging on native threads
         try:
             async with asyncio.timeout(5):
                 await telegram_bot.stop()
                 await agent.close()
         except asyncio.TimeoutError:
             logger.warning("Shutdown timed out, forcing exit")
+            os._exit(0)  # Force exit - LanceDB/OpenBLAS threads don't respect Python shutdown
         
         bot_task.cancel()
         try:
