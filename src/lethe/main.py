@@ -12,7 +12,6 @@ from lethe.agent import Agent
 from lethe.config import get_settings
 from lethe.conversation import ConversationManager
 from lethe.telegram import TelegramBot
-from lethe.tools import register_tools
 
 console = Console()
 
@@ -52,13 +51,10 @@ async def run():
     console.print(f"Memory: {settings.memory_dir}")
     console.print()
 
-    # Initialize agent
+    # Initialize agent (tools auto-loaded)
     console.print("[dim]Initializing agent...[/dim]")
     agent = Agent(settings)
     agent.initialize_default_blocks()
-    
-    # Register external tools
-    register_tools(agent)
     
     stats = agent.get_stats()
     console.print(f"[green]Agent ready[/green] - {stats['memory_blocks']} blocks, {stats['archival_memories']} memories")

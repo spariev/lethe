@@ -1,7 +1,7 @@
 [project]
 name = "lethe"
 version = "0.1.0"
-description = "Autonomous executive assistant with Letta memory layer"
+description = "Autonomous executive assistant with local memory and LLM"
 requires-python = ">=3.11"
 dependencies = [
     "aiogram>=3.24.0",

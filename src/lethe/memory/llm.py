@@ -357,14 +357,17 @@ class LLMClient:
 
 
 class AsyncLLMClient:
-    """Async version of LLMClient for use with asyncio."""
+    """Async LLM client with simple tool execution.
+    
+    Tools are just Python functions - schemas are auto-generated.
+    No approval loop, no complex registration.
+    """
     
     def __init__(
         self,
         config: Optional[LLMConfig] = None,
         system_prompt: str = "",
         memory_context: str = "",
-        tools: Optional[List[Dict]] = None,
     ):
         self.config = config or LLMConfig()
         self.context = ContextWindow(
@@ -372,15 +375,44 @@ class AsyncLLMClient:
             memory_context=memory_context,
             config=self.config,
         )
-        self.tools = tools or []
-        self.tool_handlers: Dict[str, Callable] = {}
+        
+        # Tools: name -> (function, schema)
+        self._tools: Dict[str, tuple[Callable, Dict]] = {}
         
         self._client: Optional[httpx.AsyncClient] = None
         
-        # Set up summarizer callback (will be called synchronously in async context)
+        # Set up summarizer callback
         self.context._summarizer = self._summarize_messages_sync
         
         logger.info(f"AsyncLLMClient initialized with model {self.config.model}")
+    
+    def add_tool(self, func: Callable, schema: Optional[Dict] = None):
+        """Add a tool function. Schema auto-generated if not provided."""
+        from lethe.tools import function_to_schema
+        
+        if schema is None:
+            schema = function_to_schema(func)
+        
+        self._tools[func.__name__] = (func, schema)
+    
+    def add_tools(self, tools: List[tuple[Callable, Dict]]):
+        """Add multiple tools as (function, schema) tuples."""
+        for func, schema in tools:
+            self._tools[func.__name__] = (func, schema)
+    
+    @property
+    def tools(self) -> List[Dict]:
+        """Get tool schemas for API calls."""
+        return [
+            {"type": "function", "function": schema}
+            for _, schema in self._tools.values()
+        ]
+    
+    def get_tool(self, name: str) -> Optional[Callable]:
+        """Get tool function by name."""
+        if name in self._tools:
+            return self._tools[name][0]
+        return None
     
     def _summarize_messages_sync(self, messages: List[Message], existing_summary: str) -> str:
         """Summarize messages (sync version for use in async context)."""
@@ -437,12 +469,8 @@ class AsyncLLMClient:
         return self._client
     
     def register_tool(self, name: str, handler: Callable, schema: Dict):
-        """Register a tool (handler can be sync or async)."""
-        self.tool_handlers[name] = handler
-        self.tools.append({
-            "type": "function",
-            "function": schema,
-        })
+        """Register a tool (legacy method, use add_tool instead)."""
+        self._tools[name] = (handler, schema)
     
     def update_memory_context(self, memory_context: str):
         """Update the memory context."""
@@ -502,10 +530,10 @@ class AsyncLLMClient:
                     
                     logger.info(f"Executing tool: {tool_name}({list(tool_args.keys())})")
                     
-                    # Execute tool (handle both sync and async handlers)
-                    if tool_name in self.tool_handlers:
+                    # Execute tool (handle both sync and async)
+                    handler = self.get_tool(tool_name)
+                    if handler:
                         try:
-                            handler = self.tool_handlers[tool_name]
                             if asyncio.iscoroutinefunction(handler):
                                 result = await handler(**tool_args)
                             else:
