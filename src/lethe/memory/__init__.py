@@ -4,11 +4,21 @@ Replaces Letta Cloud with a local, reliable memory backend.
 - Memory blocks (core memory)
 - Archival memory with hybrid search (vector + FTS)
 - Message history
+- Direct LLM client with context management
 """
 
 from lethe.memory.store import MemoryStore
 from lethe.memory.blocks import BlockManager
 from lethe.memory.archival import ArchivalMemory
 from lethe.memory.messages import MessageHistory
+from lethe.memory.llm import LLMClient, AsyncLLMClient, LLMConfig
 
-__all__ = ["MemoryStore", "BlockManager", "ArchivalMemory", "MessageHistory"]
+__all__ = [
+    "MemoryStore", 
+    "BlockManager", 
+    "ArchivalMemory", 
+    "MessageHistory",
+    "LLMClient",
+    "AsyncLLMClient", 
+    "LLMConfig",
+]
