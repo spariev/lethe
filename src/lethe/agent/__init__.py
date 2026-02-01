@@ -1119,16 +1119,19 @@ I'll update this as I learn about my principal's current projects and priorities
                     except Exception as e:
                         logger.warning(f"  Failed to detach {tool_name}: {e}")
 
-        # Ensure tool_rules exist for CLIENT-SIDE tools only (not built-ins)
+        # Ensure tool_rules are correct: CLIENT-SIDE tools only (not built-ins)
         # Built-in tools (memory_*, archival_*, web_search, etc.) run server-side
         # Re-fetch agent to get updated tool list
         agent = await self.client.agents.retrieve(agent_id)
         existing_rules = {r.tool_name for r in (agent.tool_rules or [])}
         all_tool_names = {t.name for t in agent.tools}
         client_side_tools = all_tool_names - self.LETTA_BUILTIN_TOOLS
+        
+        # Check if rules need updating (missing client-side OR has built-in rules)
         missing_rules = client_side_tools - existing_rules
+        incorrect_builtin_rules = existing_rules & self.LETTA_BUILTIN_TOOLS
 
-        if missing_rules:
+        if missing_rules or incorrect_builtin_rules:
             from letta_client.types import RequiresApprovalToolRuleParam
             tool_rules = [
                 RequiresApprovalToolRuleParam(tool_name=name, type="requires_approval")
@@ -1138,7 +1141,10 @@ I'll update this as I learn about my principal's current projects and priorities
                 agent_id=agent_id,
                 tool_rules=tool_rules,
             )
-            logger.info(f"Updated tool_rules: added {len(missing_rules)} approval rules for client-side tools")
+            if incorrect_builtin_rules:
+                logger.info(f"Removed approval rules from built-in tools: {incorrect_builtin_rules}")
+            if missing_rules:
+                logger.info(f"Added approval rules for client-side tools: {missing_rules}")
 
     async def _recover_from_pending_approval(self, agent_id: str, original_messages: list, error_str: str = ""):
         """Recover from a stuck pending approval state by denying it and retrying."""
