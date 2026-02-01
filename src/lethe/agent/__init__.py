@@ -179,9 +179,30 @@ class Agent:
             
             return f"Found {len(results)} messages:\n\n" + "\n\n".join(output)
         
+        def send_image(file_path: str) -> dict:
+            """Send an image to the user via Telegram.
+            
+            Use this to send screenshots, generated images, or any image file.
+            The image will be sent in the correct order with your response.
+            
+            Args:
+                file_path: Path to the image file to send
+            """
+            import os
+            if not os.path.exists(file_path):
+                return {"status": "error", "message": f"File not found: {file_path}"}
+            
+            # Return with _image_attachment to trigger on_image callback
+            return {
+                "status": "ok",
+                "message": f"Image queued: {file_path}",
+                "_image_attachment": {"path": file_path}
+            }
+        
         # Add all memory tools
         for func in [memory_read, memory_update, memory_append, 
-                     archival_search, archival_insert, conversation_search]:
+                     archival_search, archival_insert, conversation_search,
+                     send_image]:
             self.llm.add_tool(func)
     
     def add_tool(self, func: Callable):
