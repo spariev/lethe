@@ -3,6 +3,10 @@
 # Lethe Installer (lethe2 - local-first)
 # Usage: curl -fsSL https://lethe.gg/install | bash
 #
+# Default: Container mode (Docker/Podman) - safe, limited to ~/lethe/
+# Options:
+#   --unsafe    Native install with full system access
+#
 # Supports multiple LLM providers: OpenRouter, Anthropic, OpenAI
 #
 
@@ -29,6 +33,10 @@ REPO_URL="https://github.com/atemerev/lethe.git"
 REPO_BRANCH="lethe2"
 INSTALL_DIR="${LETHE_INSTALL_DIR:-$HOME/.lethe}"
 CONFIG_DIR="${LETHE_CONFIG_DIR:-$HOME/.config/lethe}"
+WORKSPACE_DIR="${LETHE_WORKSPACE_DIR:-$HOME/lethe}"
+
+# Install mode: "container" (safe, default) or "native" (unsafe)
+INSTALL_MODE="container"
 
 # Provider defaults
 declare -A PROVIDERS=(
@@ -416,21 +424,125 @@ install_deps_and_run() {
     success "Dependencies installed"
 }
 
+detect_container_runtime() {
+    if command -v podman &>/dev/null; then
+        CONTAINER_CMD="podman"
+    elif command -v docker &>/dev/null; then
+        CONTAINER_CMD="docker"
+    else
+        CONTAINER_CMD=""
+    fi
+}
+
+install_container_runtime() {
+    local OS=$(detect_os)
+    
+    if [[ -n "$CONTAINER_CMD" ]]; then
+        success "$CONTAINER_CMD found"
+        return 0
+    fi
+    
+    info "No container runtime found. Installing..."
+    
+    if [[ "$OS" == "mac" ]]; then
+        if check_command brew; then
+            brew install podman
+            podman machine init
+            podman machine start
+            CONTAINER_CMD="podman"
+        else
+            error "Please install Docker Desktop or Podman manually"
+        fi
+    elif [[ "$OS" == "linux" || "$OS" == "wsl" ]]; then
+        if check_command apt-get; then
+            maybe_sudo apt-get update -y
+            maybe_sudo apt-get install -y podman
+            CONTAINER_CMD="podman"
+        elif check_command dnf; then
+            maybe_sudo dnf install -y podman
+            CONTAINER_CMD="podman"
+        else
+            error "Please install Docker or Podman manually"
+        fi
+    else
+        error "Please install Docker or Podman manually"
+    fi
+    
+    success "$CONTAINER_CMD installed"
+}
+
+setup_container() {
+    info "Setting up container..."
+    
+    # Create workspace directory
+    mkdir -p "$WORKSPACE_DIR"
+    
+    # Build image
+    cd "$INSTALL_DIR"
+    $CONTAINER_CMD build -t lethe:latest .
+    
+    # Create env file for container
+    local key_name="${PROVIDER_KEYS[$SELECTED_PROVIDER]}"
+    
+    cat > "$CONFIG_DIR/container.env" << EOF
+TELEGRAM_BOT_TOKEN=$TELEGRAM_TOKEN
+TELEGRAM_ALLOWED_USER_IDS=$TELEGRAM_USER_ID
+LLM_PROVIDER=$SELECTED_PROVIDER
+LLM_MODEL=$SELECTED_MODEL
+$key_name=$API_KEY
+HEARTBEAT_ENABLED=true
+HIPPOCAMPUS_ENABLED=true
+EOF
+    
+    # Stop existing container if running
+    $CONTAINER_CMD stop lethe 2>/dev/null || true
+    $CONTAINER_CMD rm lethe 2>/dev/null || true
+    
+    # Run container
+    $CONTAINER_CMD run -d \
+        --name lethe \
+        --restart unless-stopped \
+        --env-file "$CONFIG_DIR/container.env" \
+        -v "$WORKSPACE_DIR:/workspace:Z" \
+        lethe:latest
+    
+    success "Container started"
+    info "Workspace: $WORKSPACE_DIR"
+    info "View logs: $CONTAINER_CMD logs -f lethe"
+}
+
 main() {
     print_header
     
     # Parse args
     for arg in "$@"; do
         case $arg in
+            --unsafe)
+                INSTALL_MODE="native"
+                shift
+                ;;
             --help|-h)
-                echo "Usage: $0"
+                echo "Usage: $0 [OPTIONS]"
                 echo ""
                 echo "Installs Lethe autonomous AI assistant."
+                echo ""
+                echo "Options:"
+                echo "  --unsafe    Native install with full system access"
+                echo "              (default: container with access to ~/lethe/ only)"
+                echo ""
                 echo "Supports OpenRouter, Anthropic, and OpenAI as LLM providers."
                 exit 0
                 ;;
         esac
     done
+    
+    # Show install mode
+    if [[ "$INSTALL_MODE" == "container" ]]; then
+        echo -e "${GREEN}Safe Mode${NC}: Container with access limited to ~/lethe/"
+    else
+        echo -e "${YELLOW}Unsafe Mode${NC}: Native install with full system access"
+    fi
+    echo ""
     
     # Detect existing keys
     detect_api_keys
@@ -445,29 +557,58 @@ main() {
     info "Installing Lethe..."
     echo ""
     
-    # Install
+    # Common setup
     install_dependencies
     clone_repo
-    install_deps_and_run
-    setup_config
-    setup_service
+    mkdir -p "$CONFIG_DIR"
     
-    echo ""
-    echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
-    echo -e "${GREEN}  Lethe installed successfully!${NC}"
-    echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
-    echo ""
-    echo "  Provider: $SELECTED_PROVIDER"
-    echo "  Model: $SELECTED_MODEL"
-    echo ""
-    echo "  Message your bot on Telegram to get started!"
-    echo ""
-    echo "  Useful commands:"
-    echo "    View logs:     journalctl --user -u lethe -f"
-    echo "    Restart:       systemctl --user restart lethe"
-    echo "    Stop:          systemctl --user stop lethe"
-    echo "    Config:        $CONFIG_DIR/.env"
-    echo ""
+    if [[ "$INSTALL_MODE" == "container" ]]; then
+        # Container mode
+        detect_container_runtime
+        install_container_runtime
+        setup_container
+        
+        echo ""
+        echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
+        echo -e "${GREEN}  Lethe installed successfully! (Container Mode)${NC}"
+        echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
+        echo ""
+        echo "  Provider: $SELECTED_PROVIDER"
+        echo "  Model: $SELECTED_MODEL"
+        echo "  Workspace: $WORKSPACE_DIR (agent can only access this directory)"
+        echo ""
+        echo "  Message your bot on Telegram to get started!"
+        echo ""
+        echo "  Useful commands:"
+        echo "    View logs:     $CONTAINER_CMD logs -f lethe"
+        echo "    Restart:       $CONTAINER_CMD restart lethe"
+        echo "    Stop:          $CONTAINER_CMD stop lethe"
+        echo "    Config:        $CONFIG_DIR/container.env"
+        echo ""
+    else
+        # Native mode (unsafe)
+        install_deps_and_run
+        setup_config
+        setup_service
+        
+        echo ""
+        echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
+        echo -e "${YELLOW}  Lethe installed successfully! (Native Mode - Full Access)${NC}"
+        echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
+        echo ""
+        echo "  Provider: $SELECTED_PROVIDER"
+        echo "  Model: $SELECTED_MODEL"
+        echo -e "  ${YELLOW}WARNING: Agent has full system access${NC}"
+        echo ""
+        echo "  Message your bot on Telegram to get started!"
+        echo ""
+        echo "  Useful commands:"
+        echo "    View logs:     journalctl --user -u lethe -f"
+        echo "    Restart:       systemctl --user restart lethe"
+        echo "    Stop:          systemctl --user stop lethe"
+        echo "    Config:        $CONFIG_DIR/.env"
+        echo ""
+    fi
 }
 
 main "$@"

@@ -1,40 +1,41 @@
-# Lethe - Autonomous Executive Assistant
-# Container image for "safety first" installation
+# Lethe Container - Safe Mode
+# Access restricted to /workspace only
 
 FROM python:3.12-slim
 
-# Install system deps including Node.js for agent-browser
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
-    nodejs \
-    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
-# Install agent-browser for browser automation
-RUN npm install -g agent-browser && agent-browser install
+# Create workspace directory (this will be mounted from host)
+RUN mkdir -p /workspace /app
 
 WORKDIR /app
 
 # Copy project files
 COPY pyproject.toml uv.lock ./
-COPY src/ src/
-COPY config/ config/
+COPY src/ ./src/
+COPY config/ ./config/
 
 # Install dependencies
 RUN uv sync --frozen
 
-# Create directories for persistent data
-RUN mkdir -p /app/workspace /app/data
+# Create non-root user for safety
+RUN useradd -m -s /bin/bash lethe
+RUN chown -R lethe:lethe /app /workspace
 
-# Volumes for persistence
-VOLUME /app/workspace
-VOLUME /app/data
-VOLUME /app/config
+USER lethe
+
+# Environment
+ENV LETHE_WORKSPACE_DIR=/workspace
+ENV LETHE_DATA_DIR=/workspace/data
+ENV LETHE_CONFIG_DIR=/app/config
 
 # Run
 CMD ["uv", "run", "lethe"]
