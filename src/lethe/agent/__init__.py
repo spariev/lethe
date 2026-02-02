@@ -154,10 +154,30 @@ Summary:"""
         # Read from workspace memory blocks (not config seeds)
         persona_block = self.memory.blocks.get_by_label("persona")
         
-        if persona_block:
-            return persona_block["value"]
+        base_prompt = persona_block["value"] if persona_block else "You are Lethe, an autonomous AI assistant."
         
-        return "You are Lethe, an autonomous AI assistant."
+        # Hard requirements appended to all prompts
+        requirements = """
+
+## FORMATTING REQUIREMENTS (ALWAYS FOLLOW)
+
+**Message splitting**: You MUST split responses into multiple short messages using `---` on its own line.
+Each `---` becomes a separate Telegram message with a pause between them.
+
+Example - instead of one long message, write:
+```
+hey! 😊
+---
+looked into that issue you mentioned
+---
+found the problem - config was pointing to wrong endpoint
+---
+fixed it, should work now
+```
+
+NEVER send walls of text. Keep each segment short (1-3 sentences max)."""
+        
+        return base_prompt + requirements
     
     async def _summarize_memories(self, prompt: str) -> str:
         """Summarize memories using LLM (for hippocampus)."""
