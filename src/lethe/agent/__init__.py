@@ -190,7 +190,7 @@ should be working now
     
     async def _summarize_memories(self, prompt: str) -> str:
         """Summarize memories using LLM (for hippocampus)."""
-        return await self.llm.complete(prompt)
+        return await self.llm.complete(prompt, use_aux=True)
     
     def _add_memory_tools(self):
         """Add internal memory management tools."""
