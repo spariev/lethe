@@ -571,8 +571,6 @@ class AsyncLLMClient:
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_output_tokens,
         }
-        
-        # Add OAuth token for claude-max provider
         return kwargs
     
     async def _call_api(self) -> Dict:

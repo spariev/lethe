@@ -113,26 +113,11 @@ async def run():
         finally:
             await telegram_bot.stop_typing(chat_id)
 
-    # OAuth callback for Claude Max (if pending auth)
-    oauth_callback = None
-    if provider == "claude-max":
-        from lethe.oauth import ClaudeOAuth
-        # Check if we have a pending OAuth flow
-        import lethe.agent as agent_module
-        if hasattr(agent_module, '_oauth_instance') and agent_module._oauth_instance:
-            oauth_instance = agent_module._oauth_instance
-            if oauth_instance._pending_auth:  # Auth flow started but not completed
-                async def complete_oauth(redirect_url: str):
-                    """Complete pending OAuth flow."""
-                    await oauth_instance.complete_auth_flow(redirect_url)
-                oauth_callback = complete_oauth
-    
     # Initialize Telegram bot
     telegram_bot = TelegramBot(
         settings,
         conversation_manager=conversation_manager,
         process_callback=process_message,
-        oauth_callback=oauth_callback,
     )
     # heartbeat_callback will be set below after Heartbeat is created
 
