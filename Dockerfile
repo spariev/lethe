@@ -23,8 +23,9 @@ COPY pyproject.toml uv.lock ./
 COPY src/ ./src/
 COPY config/ ./config/
 
-# Install dependencies
-RUN uv sync --frozen
+# Install dependencies (CPU-only PyTorch to save ~2GB)
+ENV UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
+RUN uv sync --frozen --index-strategy unsafe-best-match
 
 # Create non-root user for safety
 RUN useradd -m -s /bin/bash lethe
