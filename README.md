@@ -4,12 +4,12 @@ Autonomous executive assistant with persistent memory.
 
 Lethe is a 24/7 AI assistant that you communicate with via Telegram. It remembers everything - your preferences, your projects, conversations from months ago. The more you use it, the more useful it becomes.
 
-**This branch (`lethe2`) is a complete rewrite** - local-first, no cloud dependencies except the LLM API.
+**Local-first architecture** - no cloud dependencies except the LLM API.
 
 ## Architecture
 
 ```
-Telegram Bot → Conversation Manager → Agent → LLM (OpenRouter)
+Telegram Bot → Conversation Manager → Agent → LLM (via litellm)
      ↑              (debounce,           ↓
      │              interrupts)       Tools (bash, files, browser, web search)
      │                                   ↓
@@ -19,57 +19,52 @@ Telegram Bot → Conversation Manager → Agent → LLM (OpenRouter)
                                         └── messages (conversation history)
 ```
 
-### Key Differences from `main` Branch
+## Core Dependencies
 
-| Feature | `lethe2` (this branch) | `main` (Letta Cloud) |
-|---------|------------------------|----------------------|
-| **LLM** | Direct OpenRouter API | Letta Cloud |
-| **Memory** | Local LanceDB + files | Letta Cloud |
-| **Tools** | Execute directly | Approval loops |
-| **Latency** | Fast (~2-5s) | Slow (30-60s) |
-| **Dependencies** | Minimal | Letta server |
-| **Cost** | Pay per token only | Letta + token costs |
+| Component | Library | Purpose |
+|-----------|---------|---------|
+| **LLM** | [litellm](https://github.com/BerriAI/litellm) | Multi-provider LLM API (OpenRouter, Anthropic, OpenAI) |
+| **Vector DB** | [LanceDB](https://lancedb.com/) | Local vector + full-text search for memory |
+| **Embeddings** | [sentence-transformers](https://sbert.net/) | Local embeddings (all-MiniLM-L6-v2, CPU-only) |
+| **Telegram** | [aiogram](https://aiogram.dev/) | Async Telegram bot framework |
+
+All data stays local. Only LLM API calls leave your machine.
 
 ## Quick Start
 
-### 1. Prerequisites
+### 1. One-Line Install
 
-- Python 3.11+
-- [uv](https://github.com/astral-sh/uv) for dependency management
-- Telegram bot token from [@BotFather](https://t.me/BotFather)
-- [OpenRouter](https://openrouter.ai/) API key
+```bash
+curl -fsSL https://raw.githubusercontent.com/atemerev/lethe/main/install.sh | bash
+```
 
-### 2. Install
+The installer will prompt for:
+- LLM provider (OpenRouter, Anthropic, or OpenAI)
+- API key
+- Telegram bot token
+
+### 2. Manual Install
 
 ```bash
 git clone https://github.com/atemerev/lethe.git
 cd lethe
-git checkout lethe2
 uv sync
-```
-
-### 3. Configure
-
-```bash
 cp .env.example .env
-```
-
-Edit `.env`:
-```bash
-TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_ALLOWED_USER_IDS=your_telegram_id
-
-OPENROUTER_API_KEY=sk-or-...
-
-# Optional: Exa web search
-EXA_API_KEY=your_exa_key
-```
-
-### 4. Run
-
-```bash
+# Edit .env with your credentials
 uv run lethe
 ```
+
+### LLM Providers
+
+| Provider | Env Variable | Default Model |
+|----------|--------------|---------------|
+| OpenRouter | `OPENROUTER_API_KEY` | `moonshotai/kimi-k2.5-0127` |
+| Anthropic | `ANTHROPIC_API_KEY` | `claude-opus-4-5-20251101` |
+| OpenAI | `OPENAI_API_KEY` | `gpt-5.2` |
+
+Set `LLM_PROVIDER` to force a specific provider, or let it auto-detect from available API keys.
+
+**Multi-model support**: Set `LLM_MODEL_AUX` for a cheaper model used in heartbeats/summarization (e.g., `claude-haiku-4-5-20251001`).
 
 ### 5. (Optional) Run as Service
 
@@ -198,17 +193,26 @@ Handles async message processing with:
 |----------|-------------|---------|
 | `TELEGRAM_BOT_TOKEN` | Bot token from BotFather | (required) |
 | `TELEGRAM_ALLOWED_USER_IDS` | Comma-separated user IDs | (required) |
-| `OPENROUTER_API_KEY` | OpenRouter API key | (required) |
+| `LLM_PROVIDER` | Force provider (`openrouter`, `anthropic`, `openai`) | (auto-detect) |
+| `OPENROUTER_API_KEY` | OpenRouter API key | (one required) |
+| `ANTHROPIC_API_KEY` | Anthropic API key | (one required) |
+| `OPENAI_API_KEY` | OpenAI API key | (one required) |
+| `LLM_MODEL` | Main model | (provider default) |
+| `LLM_MODEL_AUX` | Aux model for heartbeats | (provider default) |
+| `LLM_CONTEXT_LIMIT` | Context window size | `128000` |
 | `EXA_API_KEY` | Exa web search API key | (optional) |
 | `HIPPOCAMPUS_ENABLED` | Enable memory recall | `true` |
-| `LLM_MODEL` | Model to use | `moonshotai/kimi-k2.5` |
-| `LLM_CONTEXT_LIMIT` | Context window size | `131072` |
 | `WORKSPACE_DIR` | Agent workspace | `./workspace` |
 | `MEMORY_DIR` | Memory data storage | `./data/memory` |
 
+Note: `.env` file takes precedence over shell environment variables.
+
 ### Identity Configuration
 
-Edit `config/identity.md` to customize the agent's persona. This is loaded as the system prompt.
+Edit files in `config/blocks/` to customize the agent:
+- `persona.md` - Agent's personality and behavior
+- `human.md` - What the agent knows about you
+- `project.md` - Current project context
 
 ## Development
 
