@@ -49,8 +49,16 @@ class Settings(BaseSettings):
         description="Custom API base URL for local/compatible providers (empty = use provider default)",
     )
     llm_context_limit: int = Field(
-        default=128000,
+        default=40000,
         description="Context window size in tokens",
+    )
+    llm_messages_load: int = Field(
+        default=20,
+        description="Number of recent messages to load verbatim at startup",
+    )
+    llm_messages_summarize: int = Field(
+        default=100,
+        description="Number of messages before recent to summarize at startup",
     )
 
     # Agent

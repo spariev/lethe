@@ -72,22 +72,82 @@ class Agent:
         # Add external tools (file, bash, browser)
         self.llm.add_tools(get_all_tools())
         
-        # Load recent message history into context
-        self._load_message_history()
+        # Note: call await agent.initialize() after creation to load message history
+        self._initialized = False
         
         logger.info(f"Agent initialized with model {self.settings.llm_model}")
     
-    def _load_message_history(self, max_messages: int = 50):
+    async def initialize(self):
+        """Async initialization - load message history with summarization."""
+        if self._initialized:
+            return
+        await self._load_message_history()
+        self._initialized = True
+    
+    async def _load_message_history(self):
         """Load recent message history into LLM context.
         
-        This gives the agent context from previous conversations.
+        Uses configurable two-tier loading:
+        1. Load last N messages verbatim (LLM_MESSAGES_LOAD, default 20)
+        2. Summarize M messages before that (LLM_MESSAGES_SUMMARIZE, default 100)
         """
-        recent = self.memory.messages.get_recent(max_messages)
-        if recent:
-            # Reverse to get chronological order (oldest first)
-            recent = list(reversed(recent))
-            self.llm.load_messages(recent)
-            logger.info(f"Loaded {len(recent)} messages from history")
+        load_count = self.settings.llm_messages_load
+        summarize_count = self.settings.llm_messages_summarize
+        total_needed = load_count + summarize_count
+        
+        # Get all messages we need
+        all_messages = self.memory.messages.get_recent(total_needed)
+        if not all_messages:
+            return
+        
+        # Reverse to chronological order (oldest first)
+        all_messages = list(reversed(all_messages))
+        
+        # Split into messages to summarize and messages to load verbatim
+        if len(all_messages) > load_count:
+            to_summarize = all_messages[:-load_count]
+            to_load = all_messages[-load_count:]
+        else:
+            to_summarize = []
+            to_load = all_messages
+        
+        # Summarize older messages if any
+        if to_summarize:
+            summary = await self._summarize_message_history(to_summarize)
+            if summary:
+                self.llm.context.summary = summary
+                logger.info(f"Summarized {len(to_summarize)} older messages")
+        
+        # Load recent messages verbatim
+        if to_load:
+            self.llm.load_messages(to_load)
+            logger.info(f"Loaded {len(to_load)} messages from history")
+    
+    async def _summarize_message_history(self, messages: list) -> str:
+        """Summarize a list of messages using aux model."""
+        # Format messages for summarization
+        formatted = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
+            formatted.append(f"{role}: {content[:500]}")
+        
+        messages_text = "\n".join(formatted)
+        
+        prompt = f"""Summarize this conversation history concisely. Preserve key facts, decisions, and context.
+
+{messages_text}
+
+Summary:"""
+        
+        try:
+            summary = await self.llm.complete(prompt)  # Uses aux model
+            return summary.strip() if summary else ""
+        except Exception as e:
+            logger.warning(f"Failed to summarize history: {e}")
+            return ""
     
     def _build_system_prompt(self) -> str:
         """Build system prompt from persona block in workspace."""

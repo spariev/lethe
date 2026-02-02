@@ -60,6 +60,7 @@ async def run():
     # Initialize agent (tools auto-loaded)
     console.print("[dim]Initializing agent...[/dim]")
     agent = Agent(settings)
+    await agent.initialize()  # Async init: load history with summarization
     agent.refresh_memory_context()
     
     stats = agent.get_stats()
