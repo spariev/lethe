@@ -71,23 +71,31 @@ class MessageHistory:
         """Get the messages table."""
         return self.db.open_table(self.TABLE_NAME)
     
-    def _embed(self, text: str) -> List[float]:
-        """Generate embedding for text."""
-        if not text.strip():
+    def _embed(self, text) -> List[float]:
+        """Generate embedding for text (handles multimodal content)."""
+        # Handle multimodal content (list of parts)
+        if isinstance(text, list):
+            text_parts = []
+            for part in text:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    text_parts.append(part.get("text", ""))
+            text = " ".join(text_parts)
+        
+        if not text or not text.strip():
             return [0.0] * EMBEDDING_DIM
         return self.embedder.compute_query_embeddings(text)[0]
     
     def add(
         self,
         role: str,
-        content: str,
+        content,  # str or list (multimodal)
         metadata: Optional[dict] = None,
     ) -> str:
         """Add a message to history.
         
         Args:
             role: Message role (user, assistant, system, tool)
-            content: Message content
+            content: Message content (str or multimodal list)
             metadata: Optional metadata (tool_call_id, etc.)
             
         Returns:
@@ -96,14 +104,20 @@ class MessageHistory:
         message_id = f"msg-{uuid.uuid4()}"
         now = datetime.now(timezone.utc).isoformat()
         
-        # Generate embedding
+        # Generate embedding (handles multimodal)
         vector = self._embed(content)
+        
+        # Serialize multimodal content as JSON for storage
+        if isinstance(content, list):
+            content_str = json.dumps(content)
+        else:
+            content_str = content
         
         table = self._get_table()
         table.add([{
             "id": message_id,
             "role": role,
-            "content": content,
+            "content": content_str,
             "vector": vector,
             "metadata": json.dumps(metadata or {}),
             "created_at": now,
