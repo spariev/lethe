@@ -18,13 +18,18 @@ DEFAULT_HEARTBEAT_INTERVAL = 15 * 60
 
 HEARTBEAT_MESSAGE = """[System Heartbeat - {timestamp}]
 
-Periodic check-in. Review your memory (human block, project block, tasks) and consider:
-- What are the user's current goals? Is there anything you can proactively help with?
-- Any pending tasks or reminders that are due?
-- Any follow-ups from recent conversations worth surfacing?
-- Any time-sensitive information the user should know?
+Periodic check-in. Review your memory blocks and consider the user's goals.
 
-Be proactive about advancing the user's goals - but don't be annoying. If there's genuinely nothing useful to say, respond with just "ok" and nothing will be sent. Only message the user if you have something valuable to tell them.
+You can respond in two ways:
+1. **"ok"** - Nothing urgent. Your thoughts (if any) are saved to history but not sent.
+2. **Actual message** - Only if there's something IMMEDIATELY actionable right now:
+   - A task/reminder that is DUE NOW (not "soon" or "eventually")
+   - Time-sensitive information requiring immediate action
+   - Something the user explicitly asked to be reminded about at this time
+
+Be VERY conservative. Ponderings, general thoughts, "you might want to..." are NOT worth interrupting the user. Think: "Would I text my boss about this right now?" If no, respond "ok".
+
+Your response (even "ok") is saved to conversation history, so your thinking isn't lost.
 """
 
 
@@ -111,13 +116,13 @@ class Heartbeat:
             # Process through agent
             response = await self.process_callback(message)
             
-            # If agent has something to say, send it
+            # Response is already saved to history via agent.chat()
             if response and response.strip():
-                # "ok" means nothing to report
+                # "ok" means nothing urgent - thoughts saved to history but not sent
                 if response.strip().lower() == "ok":
-                    logger.debug("Heartbeat: nothing to report")
+                    logger.debug("Heartbeat: nothing urgent (saved to history)")
                 else:
-                    logger.info(f"Heartbeat response: {response[:100]}...")
+                    logger.info(f"Heartbeat sending: {response[:100]}...")
                     await self.send_callback(response)
             else:
                 logger.debug("No heartbeat response")
