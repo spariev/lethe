@@ -35,10 +35,6 @@ class Agent:
             config_dir=str(self.settings.config_dir),
         )
         
-        # Initialize hippocampus for memory recall
-        hippocampus_enabled = os.environ.get("HIPPOCAMPUS_ENABLED", "true").lower() == "true"
-        self.hippocampus = Hippocampus(self.memory, enabled=hippocampus_enabled)
-        
         # Initialize LLM client
         llm_config = LLMConfig(
             model=self.settings.llm_model,
@@ -56,6 +52,14 @@ class Agent:
             config=llm_config,
             system_prompt=system_prompt,
             memory_context=memory_context,
+        )
+        
+        # Initialize hippocampus with summarizer
+        hippocampus_enabled = os.environ.get("HIPPOCAMPUS_ENABLED", "true").lower() == "true"
+        self.hippocampus = Hippocampus(
+            self.memory, 
+            summarizer=self._summarize_memories,
+            enabled=hippocampus_enabled,
         )
         
         # Add internal memory tools
@@ -92,6 +96,10 @@ class Agent:
             prompt += f"\n\n## Available Tools\n{tools_doc}"
         
         return prompt
+    
+    async def _summarize_memories(self, prompt: str) -> str:
+        """Summarize memories using LLM (for hippocampus)."""
+        return await self.llm.complete(prompt)
     
     def _add_memory_tools(self):
         """Add internal memory management tools."""
@@ -238,7 +246,7 @@ class Agent:
         
         # Augment message with hippocampus recall
         recent = self.memory.messages.get_recent(10)
-        augmented_message = self.hippocampus.augment_message(message, recent)
+        augmented_message = await self.hippocampus.augment_message(message, recent)
         
         # Get response from LLM (handles tool calls internally)
         response = await self.llm.chat(augmented_message, on_message=on_message, on_image=on_image)

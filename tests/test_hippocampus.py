@@ -2,7 +2,7 @@
 
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
 
@@ -27,31 +27,34 @@ class TestHippocampus:
     
     @pytest.fixture
     def hippocampus(self, memory_store):
-        """Create hippocampus with mock store."""
-        return Hippocampus(memory_store, enabled=True)
+        """Create hippocampus with mock store (no summarizer)."""
+        return Hippocampus(memory_store, summarizer=None, enabled=True)
     
-    def test_disabled_returns_none(self, memory_store):
+    @pytest.mark.asyncio
+    async def test_disabled_returns_none(self, memory_store):
         """Should return None when disabled."""
         hippo = Hippocampus(memory_store, enabled=False)
         
-        result = hippo.recall("test message")
+        result = await hippo.recall("test message")
         
         assert result is None
         memory_store.archival.search.assert_not_called()
     
-    def test_recall_searches_archival(self, hippocampus, memory_store):
+    @pytest.mark.asyncio
+    async def test_recall_searches_archival(self, hippocampus, memory_store):
         """Should search archival memory."""
         memory_store.archival.search.return_value = [
             {"text": "relevant memory", "score": 0.8, "created_at": "2024-01-01"}
         ]
         memory_store.messages.search.return_value = []
         
-        result = hippocampus.recall("test query")
+        result = await hippocampus.recall("test query")
         
         memory_store.archival.search.assert_called_once()
         assert "relevant memory" in result
     
-    def test_recall_searches_conversations(self, hippocampus, memory_store):
+    @pytest.mark.asyncio
+    async def test_recall_searches_conversations(self, hippocampus, memory_store):
         """Should search conversation history."""
         memory_store.archival.search.return_value = []
         memory_store.messages.search.return_value = [
@@ -65,12 +68,13 @@ class TestHippocampus:
             {"role": "user", "content": "past conversation", "created_at": "2024-01-01T10:00"},
         ]
         
-        result = hippocampus.recall("test query")
+        result = await hippocampus.recall("test query")
         
         memory_store.messages.search.assert_called_once()
         assert "past conversation" in result
     
-    def test_recall_filters_low_scores(self, hippocampus, memory_store):
+    @pytest.mark.asyncio
+    async def test_recall_filters_low_scores(self, hippocampus, memory_store):
         """Should filter out low-score archival results."""
         memory_store.archival.search.return_value = [
             {"text": "high score", "score": 0.8, "created_at": "2024-01-01"},
@@ -78,43 +82,47 @@ class TestHippocampus:
         ]
         memory_store.messages.search.return_value = []
         
-        result = hippocampus.recall("test query")
+        result = await hippocampus.recall("test query")
         
         assert "high score" in result
         assert "low score" not in result
     
-    def test_recall_returns_none_when_nothing_found(self, hippocampus, memory_store):
+    @pytest.mark.asyncio
+    async def test_recall_returns_none_when_nothing_found(self, hippocampus, memory_store):
         """Should return None when no relevant memories found."""
         memory_store.archival.search.return_value = []
         memory_store.messages.search.return_value = []
         
-        result = hippocampus.recall("test query")
+        result = await hippocampus.recall("test query")
         
         assert result is None
     
-    def test_augment_message_adds_recall(self, hippocampus, memory_store):
+    @pytest.mark.asyncio
+    async def test_augment_message_adds_recall(self, hippocampus, memory_store):
         """Should augment message with recalled context."""
         memory_store.archival.search.return_value = [
             {"text": "context info", "score": 0.9, "created_at": "2024-01-01"}
         ]
         memory_store.messages.search.return_value = []
         
-        result = hippocampus.augment_message("user question")
+        result = await hippocampus.augment_message("user question")
         
         assert "user question" in result
         assert "context info" in result
         assert "[Associative memory recall]" in result
     
-    def test_augment_message_unchanged_when_no_recall(self, hippocampus, memory_store):
+    @pytest.mark.asyncio
+    async def test_augment_message_unchanged_when_no_recall(self, hippocampus, memory_store):
         """Should return original message when no recall found."""
         memory_store.archival.search.return_value = []
         memory_store.messages.search.return_value = []
         
-        result = hippocampus.augment_message("user question")
+        result = await hippocampus.augment_message("user question")
         
         assert result == "user question"
     
-    def test_recall_respects_max_lines(self, hippocampus, memory_store):
+    @pytest.mark.asyncio
+    async def test_recall_respects_max_lines(self, hippocampus, memory_store):
         """Should limit recalled memories to max_lines."""
         memory_store.archival.search.return_value = [
             {"text": f"memory {i}", "score": 0.9, "created_at": "2024-01-01"}
@@ -122,7 +130,7 @@ class TestHippocampus:
         ]
         memory_store.messages.search.return_value = []
         
-        result = hippocampus.recall("test", max_lines=5)
+        result = await hippocampus.recall("test", max_lines=5)
         
         # Should have at most 5 memory lines (plus header/footer)
         assert result.count("- [") <= 5
@@ -141,15 +149,33 @@ class TestHippocampus:
         assert "previous question" in query
         assert "follow up" in query
     
-    def test_handles_search_errors_gracefully(self, hippocampus, memory_store):
+    @pytest.mark.asyncio
+    async def test_handles_search_errors_gracefully(self, hippocampus, memory_store):
         """Should handle search errors without crashing."""
         memory_store.archival.search.side_effect = Exception("Search failed")
         memory_store.messages.search.return_value = []
         
-        result = hippocampus.recall("test query")
+        result = await hippocampus.recall("test query")
         
         # Should not raise, returns None
         assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_summarizer_called_when_provided(self, memory_store):
+        """Should call summarizer when provided."""
+        mock_summarizer = AsyncMock(return_value="Summarized content")
+        hippo = Hippocampus(memory_store, summarizer=mock_summarizer, enabled=True)
+        
+        memory_store.archival.search.return_value = [
+            {"text": "long memory content", "score": 0.9, "created_at": "2024-01-01"}
+        ]
+        memory_store.messages.search.return_value = []
+        
+        result = await hippo.recall("test query")
+        
+        mock_summarizer.assert_called_once()
+        assert "Summarized content" in result
+        assert "(summarized)" in result
 
 
 if __name__ == "__main__":

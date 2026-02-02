@@ -713,6 +713,32 @@ class AsyncLLMClient:
         response.raise_for_status()
         return response.json()
     
+    async def complete(self, prompt: str) -> str:
+        """Simple completion without tools or context management.
+        
+        Used for summarization and other utility tasks.
+        
+        Args:
+            prompt: The prompt to complete
+            
+        Returns:
+            The completion text
+        """
+        client = await self._get_client()
+        
+        payload = {
+            "model": self.config.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,  # Lower temperature for factual tasks
+            "max_tokens": 2000,
+        }
+        
+        response = await client.post("/chat/completions", json=payload)
+        response.raise_for_status()
+        result = response.json()
+        
+        return result["choices"][0]["message"].get("content", "")
+    
     async def close(self):
         """Close the HTTP client."""
         if self._client:

@@ -2,40 +2,68 @@
 
 Inspired by the biological hippocampus that consolidates and retrieves memories.
 On each user message, searches archival and conversation history for relevant context.
+Summarizes retrieved memories to compress context while preserving reference data.
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Callable, Awaitable
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-# Max lines of recalled memories to include
+# Max lines of recalled memories before summarization
 MAX_RECALL_LINES = 50
 
 # Minimum score threshold for including memories
 MIN_SCORE_THRESHOLD = 0.3
 
+# Summarization prompt - preserves reference data
+SUMMARIZE_PROMPT = """Summarize these recalled memories concisely for context. 
+
+CRITICAL: Preserve ALL of the following exactly as-is (do not paraphrase or omit):
+- URLs, links, file paths
+- Credentials, API keys, tokens
+- IDs, reference numbers
+- Dates and times
+- Names of people, projects, tools
+- Code snippets, commands
+- Specific numbers and measurements
+
+Strip out filler, redundancy, and conversational fluff. Keep facts dense.
+
+Memories to summarize:
+{memories}
+
+Summary (preserve all reference data):"""
+
 
 class Hippocampus:
-    """Retrieves relevant memories to augment user messages.
+    """Retrieves and summarizes relevant memories to augment user messages.
     
     Uses the conversation context + new message as a search query,
     returning relevant archival memories and past conversations.
+    Optionally summarizes to compress context.
     """
     
-    def __init__(self, memory_store, enabled: bool = True):
+    def __init__(
+        self, 
+        memory_store, 
+        summarizer: Optional[Callable[[str], Awaitable[str]]] = None,
+        enabled: bool = True,
+    ):
         """Initialize hippocampus.
         
         Args:
             memory_store: MemoryStore instance with archival and messages
+            summarizer: Optional async function to summarize memories
             enabled: Whether to enable memory recall
         """
         self.memory = memory_store
+        self.summarizer = summarizer
         self.enabled = enabled
-        logger.info(f"Hippocampus initialized (enabled={enabled})")
+        logger.info(f"Hippocampus initialized (enabled={enabled}, summarizer={summarizer is not None})")
     
-    def recall(
+    async def recall(
         self,
         message: str,
         recent_messages: Optional[list[dict]] = None,
@@ -46,10 +74,10 @@ class Hippocampus:
         Args:
             message: The new user message
             recent_messages: Recent conversation context (optional)
-            max_lines: Maximum lines of memories to return
+            max_lines: Maximum lines of memories before summarization
             
         Returns:
-            Formatted memory recall string, or None if nothing relevant found
+            Formatted (and optionally summarized) memory recall string
         """
         if not self.enabled:
             return None
@@ -69,7 +97,15 @@ class Hippocampus:
         if not memories:
             return None
         
-        return memories
+        # Summarize if we have a summarizer, otherwise wrap in recall block
+        if self.summarizer:
+            return await self._summarize(memories)
+        else:
+            return (
+                "[Associative memory recall]\n"
+                + memories
+                + "\n[End of recall]"
+            )
     
     def _build_query(
         self,
@@ -173,14 +209,32 @@ class Hippocampus:
         if not sections:
             return None
         
-        # Wrap in recall block
+        return "\n\n".join(sections)
+    
+    async def _summarize(self, memories: str) -> str:
+        """Summarize memories using the configured summarizer."""
+        try:
+            prompt = SUMMARIZE_PROMPT.format(memories=memories)
+            summary = await self.summarizer(prompt)
+            
+            if summary:
+                logger.info(f"Summarized {len(memories)} -> {len(summary)} chars")
+                return (
+                    "[Associative memory recall (summarized)]\n"
+                    + summary.strip()
+                    + "\n[End of recall]"
+                )
+        except Exception as e:
+            logger.warning(f"Summarization failed: {e}")
+        
+        # Fallback to unsummarized
         return (
             "[Associative memory recall]\n"
-            + "\n\n".join(sections)
+            + memories
             + "\n[End of recall]"
         )
     
-    def augment_message(
+    async def augment_message(
         self,
         message: str,
         recent_messages: Optional[list[dict]] = None,
@@ -194,7 +248,7 @@ class Hippocampus:
         Returns:
             Original message, possibly with appended memory context
         """
-        recall = self.recall(message, recent_messages)
+        recall = await self.recall(message, recent_messages)
         
         if recall:
             logger.info(f"Hippocampus recalled {len(recall)} chars of context")
