@@ -18,18 +18,18 @@ DEFAULT_HEARTBEAT_INTERVAL = 15 * 60
 
 HEARTBEAT_MESSAGE = """[System Heartbeat - {timestamp}]
 
-Periodic check-in. Review your memory blocks and consider the user's goals.
+Periodic check-in. Review your memory blocks (persona, human, project) for pending tasks.
 
-You can respond in two ways:
-1. **"ok"** - Nothing urgent. Your thoughts (if any) are saved to history but not sent.
-2. **Actual message** - Only if there's something IMMEDIATELY actionable right now:
-   - A task/reminder that is DUE NOW (not "soon" or "eventually")
+IMPORTANT: Do NOT use tools during heartbeat. Just review what you already know from memory.
+
+Respond in one of two ways:
+1. **"ok"** - Nothing urgent right now.
+2. **Brief message** - ONLY if there's something immediately actionable:
+   - A task/reminder that is DUE NOW
    - Time-sensitive information requiring immediate action
-   - Something the user explicitly asked to be reminded about at this time
 
-Be VERY conservative. Ponderings, general thoughts, "you might want to..." are NOT worth interrupting the user. Think: "Would I text my boss about this right now?" If no, respond "ok".
-
-Your response (even "ok") is saved to conversation history, so your thinking isn't lost.
+Do NOT: test tools, verify capabilities, do exploratory actions, or send "status updates".
+Think: "Would I text my boss about this right now?" If not urgent, respond "ok".
 """
 
 
