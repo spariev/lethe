@@ -37,6 +37,10 @@ Memories to summarize:
 Summary (preserve all reference data):"""
 
 
+# Warning added to recall block
+ACAUSAL_WARNING = """WARNING: This recall is acausal - these memories may be from the past and do not reflect current state. Do NOT use recalled memories to determine what is done or pending. Use conversation history, todo tools, and memory blocks for current state."""
+
+
 class Hippocampus:
     """Retrieves and summarizes relevant memories to augment user messages.
     
@@ -103,6 +107,7 @@ class Hippocampus:
         else:
             return (
                 "<associative_memory_recall>\n"
+                + ACAUSAL_WARNING + "\n\n"
                 + memories
                 + "\n</associative_memory_recall>"
             )
@@ -221,6 +226,7 @@ class Hippocampus:
                 logger.info(f"Summarized {len(memories)} -> {len(summary)} chars")
                 return (
                     "<associative_memory_recall summarized=\"true\">\n"
+                    + ACAUSAL_WARNING + "\n\n"
                     + summary.strip()
                     + "\n</associative_memory_recall>"
                 )
@@ -230,6 +236,7 @@ class Hippocampus:
         # Fallback to unsummarized
         return (
             "<associative_memory_recall>\n"
+            + ACAUSAL_WARNING + "\n\n"
             + memories
             + "\n</associative_memory_recall>"
         )

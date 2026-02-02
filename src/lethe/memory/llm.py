@@ -117,12 +117,18 @@ class ContextWindow:
         """Load existing messages from history (e.g., from database).
         
         Args:
-            messages: List of dicts with 'role' and 'content' keys
+            messages: List of dicts with 'role', 'content', and optionally 'created_at' keys
         """
         for msg in messages:
+            content = msg.get("content", "")
+            # Prepend timestamp if available
+            if msg.get("created_at"):
+                timestamp = msg["created_at"][:16].replace("T", " ")  # "2026-02-02 10:30"
+                content = f"[{timestamp}] {content}"
+            
             self.messages.append(Message(
                 role=msg.get("role", "user"),
-                content=msg.get("content", ""),
+                content=content,
             ))
         # Compress if needed after loading
         self._compress_if_needed()
@@ -548,7 +554,8 @@ class AsyncLLMClient:
         """Load existing messages from history into context.
         
         Args:
-            messages: List of dicts with 'role' and 'content' keys
+            messages: List of dicts with 'role', 'content', and optionally 'created_at' keys
+                     Timestamps are prepended to content for temporal context.
         """
         self.context.load_messages(messages)
     
