@@ -189,7 +189,8 @@ class TelegramBot:
         """Start the bot."""
         self._running = True
         logger.info("Starting Telegram bot...")
-        await self.dp.start_polling(self.bot)
+        # handle_signals=False lets us handle SIGTERM ourselves
+        await self.dp.start_polling(self.bot, handle_signals=False)
 
     async def stop(self):
         """Stop the bot."""
