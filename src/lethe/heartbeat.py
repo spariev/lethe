@@ -113,14 +113,12 @@ class Heartbeat:
             
             # If agent has something to say, send it
             if response and response.strip():
-                # Filter out "acknowledged" type responses
-                lower = response.lower().strip()
-                silent_acks = ["ok", "acknowledged", "no updates", "nothing to report", "heartbeat received", "nothing new"]
-                if lower not in silent_acks and not any(x in lower for x in silent_acks):
+                # "ok" means nothing to report
+                if response.strip().lower() == "ok":
+                    logger.debug("Heartbeat: nothing to report")
+                else:
                     logger.info(f"Heartbeat response: {response[:100]}...")
                     await self.send_callback(response)
-                else:
-                    logger.debug("Heartbeat acknowledged silently")
             else:
                 logger.debug("No heartbeat response")
                 
