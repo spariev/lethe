@@ -18,19 +18,34 @@ DEFAULT_HEARTBEAT_INTERVAL = 15 * 60
 
 HEARTBEAT_MESSAGE = """[System Heartbeat - {timestamp}]
 
-Periodic check-in. Review your memory blocks (persona, human, project) for pending tasks.
+Periodic check-in. You may use tools if needed to check tasks, reminders, or gather information.
 
-IMPORTANT: Do NOT use tools during heartbeat. Just review what you already know from memory.
+After your work, provide a final summary. The summary will be evaluated to decide if it's worth sending to the user.
 
-Respond in one of two ways:
-1. **"ok"** - Nothing urgent right now.
-2. **Brief message** - ONLY if there's something immediately actionable:
-   - A task/reminder that is DUE NOW
-   - Time-sensitive information requiring immediate action
+Guidelines:
+- Check pending tasks, reminders, calendar if relevant
+- Gather any time-sensitive information
+- Your tool outputs and ponderings are captured but NOT sent directly to user
+- Only your final summary is evaluated
 
-Do NOT: test tools, verify capabilities, do exploratory actions, or send "status updates".
-Think: "Would I text my boss about this right now?" If not urgent, respond "ok".
+End with either:
+- "ok" if nothing urgent
+- A brief, actionable message if something needs user attention NOW
 """
+
+
+SUMMARIZE_HEARTBEAT_PROMPT = """You are evaluating a heartbeat check-in from an AI assistant.
+
+The assistant checked on pending tasks and gathered information. Here's their response:
+
+{response}
+
+Decide if this is worth sending to the user RIGHT NOW:
+- If it's just status updates, ponderings, or "everything is fine" → respond with just "ok"
+- If there's something genuinely urgent or time-sensitive → respond with a brief (1-2 sentence) message
+
+Think: "Would I interrupt someone's work for this?" If no, respond "ok".
+Only respond with "ok" or the brief message, nothing else."""
 
 
 class Heartbeat:
@@ -40,6 +55,7 @@ class Heartbeat:
         self,
         process_callback: Callable[[str], Awaitable[Optional[str]]],
         send_callback: Callable[[str], Awaitable[None]],
+        summarize_callback: Optional[Callable[[str], Awaitable[str]]] = None,
         interval: int = DEFAULT_HEARTBEAT_INTERVAL,
         enabled: bool = True,
     ):
@@ -49,11 +65,13 @@ class Heartbeat:
             process_callback: Async function to process heartbeat message through agent
                              Returns response string or None
             send_callback: Async function to send response to user (e.g., Telegram)
+            summarize_callback: Async function to summarize/evaluate response before sending
             interval: Seconds between heartbeats
             enabled: Whether heartbeats are enabled
         """
         self.process_callback = process_callback
         self.send_callback = send_callback
+        self.summarize_callback = summarize_callback
         self.interval = interval
         self.enabled = enabled
         self._task: Optional[asyncio.Task] = None
@@ -113,19 +131,27 @@ class Heartbeat:
         logger.info(f"Sending heartbeat at {timestamp}")
         
         try:
-            # Process through agent
+            # Process through agent (may use tools, full context)
             response = await self.process_callback(message)
             
-            # Response is already saved to history via agent.chat()
-            if response and response.strip():
-                # "ok" means nothing urgent - thoughts saved to history but not sent
-                if response.strip().lower() == "ok":
-                    logger.debug("Heartbeat: nothing urgent (saved to history)")
-                else:
-                    logger.info(f"Heartbeat sending: {response[:100]}...")
-                    await self.send_callback(response)
-            else:
+            if not response or not response.strip():
                 logger.debug("No heartbeat response")
+                return
+            
+            # Summarize/evaluate response before deciding to send
+            if self.summarize_callback:
+                prompt = SUMMARIZE_HEARTBEAT_PROMPT.format(response=response)
+                evaluated = await self.summarize_callback(prompt)
+                final_response = evaluated.strip() if evaluated else "ok"
+            else:
+                final_response = response.strip()
+            
+            # "ok" means nothing urgent
+            if final_response.lower() == "ok":
+                logger.info("Heartbeat: nothing urgent (work saved to history)")
+            else:
+                logger.info(f"Heartbeat sending: {final_response[:100]}...")
+                await self.send_callback(final_response)
                 
         except Exception as e:
             logger.exception(f"Heartbeat processing failed: {e}")

@@ -130,18 +130,22 @@ async def run():
     heartbeat_chat_id = int(allowed_ids.split(",")[0]) if allowed_ids else None
     
     async def heartbeat_process(message: str) -> str:
-        """Process heartbeat - simple completion without tools."""
-        # Use llm.complete() directly to avoid tool calls
-        return await agent.llm.complete(message)
+        """Process heartbeat through full agent (tools allowed)."""
+        return await agent.chat(message, use_hippocampus=False)
     
     async def heartbeat_send(response: str):
         """Send heartbeat response to user."""
         if heartbeat_chat_id:
             await telegram_bot.send_message(heartbeat_chat_id, response)
     
+    async def heartbeat_summarize(prompt: str) -> str:
+        """Summarize/evaluate heartbeat response before sending."""
+        return await agent.llm.complete(prompt)
+    
     heartbeat = Heartbeat(
         process_callback=heartbeat_process,
         send_callback=heartbeat_send,
+        summarize_callback=heartbeat_summarize,
         interval=heartbeat_interval,
         enabled=heartbeat_enabled and heartbeat_chat_id is not None,
     )
