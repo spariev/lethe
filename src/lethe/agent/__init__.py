@@ -10,7 +10,7 @@ import os
 from typing import Callable, Optional, Any
 
 from lethe.config import Settings, get_settings, load_config_file
-from lethe.memory import MemoryStore, AsyncLLMClient, LLMConfig
+from lethe.memory import MemoryStore, AsyncLLMClient, LLMConfig, Hippocampus
 from lethe.tools import get_all_tools, function_to_schema
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,10 @@ class Agent:
             data_dir=str(self.settings.memory_dir),
             workspace_dir=str(self.settings.workspace_dir),
         )
+        
+        # Initialize hippocampus for memory recall
+        hippocampus_enabled = os.environ.get("HIPPOCAMPUS_ENABLED", "true").lower() == "true"
+        self.hippocampus = Hippocampus(self.memory, enabled=hippocampus_enabled)
         
         # Initialize LLM client
         llm_config = LLMConfig(
@@ -228,11 +232,15 @@ class Agent:
         Returns:
             Final assistant response
         """
-        # Store user message in history
+        # Store user message in history (original, without recall)
         self.memory.messages.add("user", message)
         
+        # Augment message with hippocampus recall
+        recent = self.memory.messages.get_recent(10)
+        augmented_message = self.hippocampus.augment_message(message, recent)
+        
         # Get response from LLM (handles tool calls internally)
-        response = await self.llm.chat(message, on_message=on_message, on_image=on_image)
+        response = await self.llm.chat(augmented_message, on_message=on_message, on_image=on_image)
         
         # Store assistant response in history
         self.memory.messages.add("assistant", response)
