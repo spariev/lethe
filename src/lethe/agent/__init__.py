@@ -35,10 +35,9 @@ class Agent:
             config_dir=str(self.settings.lethe_config_dir),
         )
         
-        # Initialize LLM client
+        # Initialize LLM client (provider auto-detected from env vars)
         llm_config = LLMConfig(
-            model=self.settings.llm_model,
-            api_key=os.environ.get("OPENROUTER_API_KEY"),
+            model=self.settings.llm_model or "",  # Empty = use provider default
             context_limit=self.settings.llm_context_limit,
         )
         
