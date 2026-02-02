@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Lethe Installer (lethe2 - local-first)
+# Lethe Installer (local-first architecture)
 # Usage: curl -fsSL https://lethe.gg/install | bash
 #
 # Default: Container mode (Docker/Podman) - safe, limited to ~/lethe/
@@ -30,7 +30,7 @@ NC='\033[0m' # No Color
 
 # Config
 REPO_URL="https://github.com/atemerev/lethe.git"
-REPO_BRANCH="lethe2"
+REPO_BRANCH="main"
 INSTALL_DIR="${LETHE_INSTALL_DIR:-$HOME/.lethe}"
 CONFIG_DIR="${LETHE_CONFIG_DIR:-$HOME/.config/lethe}"
 WORKSPACE_DIR="${LETHE_WORKSPACE_DIR:-$HOME/lethe}"
