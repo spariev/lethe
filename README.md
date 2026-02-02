@@ -157,6 +157,30 @@ Conversation history stored locally. Searchable via `conversation_search` tool.
 - `archival_insert` - Store in long-term memory
 - `conversation_search` - Search message history
 
+## Hippocampus (Autoassociative Memory)
+
+On each message, the hippocampus automatically searches for relevant context:
+
+```
+User message → Hippocampus → Augmented message → LLM
+                   ↓
+            Search archival memory
+            Search conversation history
+                   ↓
+            [Associative memory recall]
+            **From long-term memory:**
+            - relevant facts...
+            **From past conversations:**
+            - related discussions...
+            [End of recall]
+```
+
+- Searches archival memory (semantic + keyword hybrid)
+- Searches past conversations (excludes recent 5 messages)
+- Filters by relevance score (threshold: 0.3)
+- Max 3000 chars of context added
+- Disable with `HIPPOCAMPUS_ENABLED=false`
+
 ## Conversation Manager
 
 Handles async message processing with:
@@ -176,6 +200,7 @@ Handles async message processing with:
 | `TELEGRAM_ALLOWED_USER_IDS` | Comma-separated user IDs | (required) |
 | `OPENROUTER_API_KEY` | OpenRouter API key | (required) |
 | `EXA_API_KEY` | Exa web search API key | (optional) |
+| `HIPPOCAMPUS_ENABLED` | Enable memory recall | `true` |
 | `LLM_MODEL` | Model to use | `moonshotai/kimi-k2.5` |
 | `LLM_CONTEXT_LIMIT` | Context window size | `131072` |
 | `WORKSPACE_DIR` | Agent workspace | `./workspace` |
@@ -204,6 +229,7 @@ uv run pytest --cov=lethe
 - `test_blocks.py` - 15 tests (file-based memory blocks)
 - `test_truncate.py` - 20 tests (smart truncation utilities)
 - `test_conversation.py` - 16 tests (conversation manager)
+- `test_hippocampus.py` - 10 tests (autoassociative memory recall)
 
 ## Adding Custom Tools
 
