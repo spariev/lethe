@@ -9,7 +9,7 @@ import logging
 import os
 from typing import Callable, Optional, Any
 
-from lethe.config import Settings, get_settings, load_config_file
+from lethe.config import Settings, get_settings
 from lethe.memory import MemoryStore, AsyncLLMClient, LLMConfig, Hippocampus
 from lethe.tools import get_all_tools, function_to_schema
 
@@ -86,16 +86,13 @@ class Agent:
             logger.info(f"Loaded {len(recent)} messages from history")
     
     def _build_system_prompt(self) -> str:
-        """Build system prompt from config files."""
-        identity = load_config_file("identity", self.settings)
-        tools_doc = load_config_file("tools", self.settings)
+        """Build system prompt from persona seed block."""
+        persona_path = self.settings.lethe_config_dir / "blocks" / "persona.md"
         
-        prompt = identity or "You are Lethe, an autonomous AI assistant."
+        if persona_path.exists():
+            return persona_path.read_text()
         
-        if tools_doc:
-            prompt += f"\n\n## Available Tools\n{tools_doc}"
-        
-        return prompt
+        return "You are Lethe, an autonomous AI assistant."
     
     async def _summarize_memories(self, prompt: str) -> str:
         """Summarize memories using LLM (for hippocampus)."""
