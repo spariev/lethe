@@ -11,7 +11,7 @@ from lethe.memory.store import MemoryStore
 from lethe.memory.blocks import BlockManager
 from lethe.memory.archival import ArchivalMemory
 from lethe.memory.messages import MessageHistory
-from lethe.memory.llm import LLMClient, AsyncLLMClient, LLMConfig
+from lethe.memory.llm import AsyncLLMClient, LLMConfig
 from lethe.memory.hippocampus import Hippocampus
 
 __all__ = [
@@ -19,7 +19,7 @@ __all__ = [
     "BlockManager", 
     "ArchivalMemory", 
     "MessageHistory",
-    "LLMClient",
+
     "AsyncLLMClient", 
     "LLMConfig",
     "Hippocampus",

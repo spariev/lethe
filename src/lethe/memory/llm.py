@@ -1,6 +1,6 @@
 """Direct LLM client with context management.
 
-Replaces Letta's agent loop with direct OpenRouter API calls.
+Uses litellm for multi-provider support (OpenRouter, Anthropic, OpenAI, etc).
 Handles context preparation, token counting, and tool calling.
 """
 
@@ -10,13 +10,35 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Callable
 import logging
-import httpx
+
+import litellm
+from litellm import acompletion, completion
 
 logger = logging.getLogger(__name__)
 
-# OpenRouter API
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = "moonshotai/kimi-k2.5"  # Kimi K2.5
+# Suppress litellm's verbose logging
+litellm.suppress_debug_info = True
+
+# Provider configurations
+PROVIDERS = {
+    "openrouter": {
+        "env_key": "OPENROUTER_API_KEY",
+        "model_prefix": "openrouter/",
+        "default_model": "openrouter/moonshotai/kimi-k2.5",
+    },
+    "anthropic": {
+        "env_key": "ANTHROPIC_API_KEY",
+        "model_prefix": "",  # litellm auto-detects claude models
+        "default_model": "claude-opus-4-5-20250514",
+    },
+    "openai": {
+        "env_key": "OPENAI_API_KEY",
+        "model_prefix": "",  # litellm auto-detects gpt models
+        "default_model": "gpt-5.2",
+    },
+}
+
+DEFAULT_PROVIDER = "openrouter"
 
 # Context limits (chars, roughly 4 chars per token)
 CHARS_PER_TOKEN = 4
@@ -42,19 +64,46 @@ Only output the summary, do NOT include anything else in your output."""
 
 @dataclass
 class LLMConfig:
-    """LLM configuration."""
-    model: str = DEFAULT_MODEL
-    api_key: Optional[str] = None
-    base_url: str = OPENROUTER_BASE_URL
+    """LLM configuration with multi-provider support via litellm."""
+    provider: str = ""  # Auto-detect if not set
+    model: str = ""  # Use provider default if not set
     context_limit: int = DEFAULT_CONTEXT_LIMIT
     max_output_tokens: int = DEFAULT_MAX_OUTPUT
     temperature: float = 0.7
     
     def __post_init__(self):
-        if not self.api_key:
-            self.api_key = os.environ.get("OPENROUTER_API_KEY")
-        if not self.api_key:
-            raise ValueError("OPENROUTER_API_KEY not set")
+        # Auto-detect provider from environment if not set
+        if not self.provider:
+            self.provider = self._detect_provider()
+        
+        provider_config = PROVIDERS.get(self.provider)
+        if not provider_config:
+            raise ValueError(f"Unknown provider: {self.provider}. Valid: {list(PROVIDERS.keys())}")
+        
+        # Set model from provider default if not set
+        if not self.model:
+            self.model = provider_config["default_model"]
+        
+        # Verify API key exists
+        env_key = provider_config["env_key"]
+        if not os.environ.get(env_key):
+            raise ValueError(f"{env_key} not set")
+    
+    def _detect_provider(self) -> str:
+        """Auto-detect provider from available API keys."""
+        # Check LLM_PROVIDER env var first
+        provider = os.environ.get("LLM_PROVIDER", "").lower()
+        if provider and provider in PROVIDERS:
+            return provider
+        
+        # Check for API keys in order of preference
+        for name, config in PROVIDERS.items():
+            if os.environ.get(config["env_key"]):
+                logger.info(f"Auto-detected provider: {name}")
+                return name
+        
+        # Default
+        return DEFAULT_PROVIDER
 
 
 @dataclass
@@ -246,184 +295,6 @@ class ContextWindow:
         return messages
 
 
-class LLMClient:
-    """Direct LLM client using OpenRouter.
-    
-    Handles:
-    - Context window management
-    - Tool/function calling
-    - Streaming responses
-    """
-    
-    def __init__(
-        self,
-        config: Optional[LLMConfig] = None,
-        system_prompt: str = "",
-        memory_context: str = "",
-        tools: Optional[List[Dict]] = None,
-    ):
-        self.config = config or LLMConfig()
-        self.context = ContextWindow(
-            system_prompt=system_prompt,
-            memory_context=memory_context,
-            config=self.config,
-        )
-        self.tools = tools or []
-        self.tool_handlers: Dict[str, Callable] = {}
-        
-        self.client = httpx.Client(
-            base_url=self.config.base_url,
-            headers={
-                "Authorization": f"Bearer {self.config.api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com/atemerev/lethe",
-                "X-Title": "Lethe AI Assistant",
-            },
-            timeout=120.0,
-        )
-        
-        # Set up summarizer callback
-        self.context._summarizer = self._summarize_messages
-        
-        logger.info(f"LLMClient initialized with model {self.config.model}")
-    
-    def _summarize_messages(self, messages: List[Message], existing_summary: str) -> str:
-        """Summarize a list of messages using LLM."""
-        # Format messages for summarization
-        formatted = []
-        for m in messages:
-            formatted.append(f"{m.role}: {m.content}")
-        conversation = "\n".join(formatted)
-        
-        if existing_summary:
-            conversation = f"Previous summary: {existing_summary}\n\nNew messages to incorporate:\n{conversation}"
-        
-        # Call LLM for summarization
-        try:
-            payload = {
-                "model": self.config.model,
-                "messages": [
-                    {"role": "system", "content": SUMMARIZE_PROMPT},
-                    {"role": "user", "content": conversation},
-                ],
-                "temperature": 0.3,  # Lower temperature for factual summary
-                "max_tokens": 500,
-            }
-            
-            response = self.client.post("/chat/completions", json=payload)
-            response.raise_for_status()
-            result = response.json()
-            return result["choices"][0]["message"]["content"]
-        except Exception as e:
-            logger.error(f"Summarization failed: {e}")
-            return existing_summary  # Keep old summary on failure
-    
-    def register_tool(self, name: str, handler: Callable, schema: Dict):
-        """Register a tool with its handler and schema."""
-        self.tool_handlers[name] = handler
-        self.tools.append({
-            "type": "function",
-            "function": schema,
-        })
-    
-    def update_memory_context(self, memory_context: str):
-        """Update the memory context (e.g., after memory block changes)."""
-        self.context.memory_context = memory_context
-    
-    def chat(
-        self,
-        message: str,
-        max_tool_iterations: int = 10,
-    ) -> str:
-        """Send a message and get response, handling tool calls.
-        
-        Args:
-            message: User message
-            max_tool_iterations: Max tool call loops
-            
-        Returns:
-            Final assistant response text
-        """
-        # Add user message
-        self.context.add_message(Message(role="user", content=message))
-        
-        for iteration in range(max_tool_iterations):
-            # Make API call
-            response = self._call_api()
-            
-            # Check for tool calls
-            choice = response["choices"][0]
-            assistant_msg = choice["message"]
-            
-            # Handle tool calls
-            tool_calls = assistant_msg.get("tool_calls")
-            if tool_calls:
-                # Add assistant message with tool calls
-                self.context.add_message(Message(
-                    role="assistant",
-                    content=assistant_msg.get("content") or "",
-                    tool_calls=tool_calls,
-                ))
-                
-                # Execute tools and add results
-                for tool_call in tool_calls:
-                    tool_name = tool_call["function"]["name"].strip()  # Strip whitespace
-                    tool_args = json.loads(tool_call["function"]["arguments"])
-                    tool_id = tool_call["id"]
-                    
-                    logger.info(f"Executing tool: {tool_name}({tool_args})")
-                    
-                    # Execute tool
-                    if tool_name in self.tool_handlers:
-                        try:
-                            result = self.tool_handlers[tool_name](**tool_args)
-                        except Exception as e:
-                            result = f"Error: {e}"
-                            logger.error(f"Tool {tool_name} failed: {e}")
-                    else:
-                        result = f"Unknown tool: {tool_name}"
-                    
-                    # Add tool result
-                    self.context.add_message(Message(
-                        role="tool",
-                        content=str(result),
-                        tool_call_id=tool_id,
-                    ))
-                
-                continue  # Loop to get next response
-            
-            # No tool calls - we have final response
-            content = assistant_msg.get("content") or ""
-            self.context.add_message(Message(role="assistant", content=content))
-            return content
-        
-        return "Max tool iterations reached"
-    
-    def _call_api(self) -> Dict:
-        """Make API call to OpenRouter."""
-        messages = self.context.build_messages()
-        
-        payload = {
-            "model": self.config.model,
-            "messages": messages,
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_output_tokens,
-        }
-        
-        if self.tools:
-            payload["tools"] = self.tools
-        
-        logger.debug(f"API call: {len(messages)} messages, {len(self.tools)} tools")
-        
-        response = self.client.post("/chat/completions", json=payload)
-        response.raise_for_status()
-        return response.json()
-    
-    def get_context_stats(self) -> Dict:
-        """Get context window statistics."""
-        return self.context.get_stats()
-
-
 class AsyncLLMClient:
     """Async LLM client with simple tool execution.
     
@@ -447,7 +318,7 @@ class AsyncLLMClient:
         # Tools: name -> (function, schema)
         self._tools: Dict[str, tuple[Callable, Dict]] = {}
         
-        self._client: Optional[httpx.AsyncClient] = None
+        # No httpx client needed - using litellm
         
         # Set up summarizer callback
         self.context._summarizer = self._summarize_messages_sync
@@ -495,48 +366,21 @@ class AsyncLLMClient:
         if existing_summary:
             conversation = f"Previous summary: {existing_summary}\n\nNew messages to incorporate:\n{conversation}"
         
-        # Use sync client for summarization
+        # Use litellm for summarization
         try:
-            with httpx.Client(
-                base_url=self.config.base_url,
-                headers={
-                    "Authorization": f"Bearer {self.config.api_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=60.0,
-            ) as client:
-                payload = {
-                    "model": self.config.model,
-                    "messages": [
-                        {"role": "system", "content": SUMMARIZE_PROMPT},
-                        {"role": "user", "content": conversation},
-                    ],
-                    "temperature": 0.3,
-                    "max_tokens": 500,
-                }
-                
-                response = client.post("/chat/completions", json=payload)
-                response.raise_for_status()
-                result = response.json()
-                return result["choices"][0]["message"]["content"]
+            response = completion(
+                model=self.config.model,
+                messages=[
+                    {"role": "system", "content": SUMMARIZE_PROMPT},
+                    {"role": "user", "content": conversation},
+                ],
+                temperature=0.3,
+                max_tokens=500,
+            )
+            return response.choices[0].message.content or ""
         except Exception as e:
             logger.error(f"Summarization failed: {e}")
             return existing_summary
-    
-    async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create async HTTP client."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                base_url=self.config.base_url,
-                headers={
-                    "Authorization": f"Bearer {self.config.api_key}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://github.com/atemerev/lethe",
-                    "X-Title": "Lethe AI Assistant",
-                },
-                timeout=120.0,
-            )
-        return self._client
     
     def register_tool(self, name: str, handler: Callable, schema: Dict):
         """Register a tool (legacy method, use add_tool instead)."""
@@ -681,11 +525,10 @@ class AsyncLLMClient:
         return "Task processing limit reached. The work done so far has been saved."
     
     async def _call_api(self) -> Dict:
-        """Make API call to OpenRouter."""
-        client = await self._get_client()
+        """Make API call via litellm."""
         messages = self.context.build_messages()
         
-        payload = {
+        kwargs = {
             "model": self.config.model,
             "messages": messages,
             "temperature": self.config.temperature,
@@ -693,32 +536,27 @@ class AsyncLLMClient:
         }
         
         if self.tools:
-            payload["tools"] = self.tools
+            kwargs["tools"] = self.tools
         
         logger.debug(f"API call: {len(messages)} messages, {len(self.tools)} tools")
         
-        response = await client.post("/chat/completions", json=payload)
-        response.raise_for_status()
-        return response.json()
+        response = await acompletion(**kwargs)
+        # Convert litellm response to dict format
+        return response.model_dump()
     
     async def _call_api_no_tools(self) -> Dict:
         """Make API call without tools (for final response after hitting limit)."""
-        client = await self._get_client()
         messages = self.context.build_messages()
-        
-        payload = {
-            "model": self.config.model,
-            "messages": messages,
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_output_tokens,
-        }
-        # Deliberately not including tools
         
         logger.debug(f"API call (no tools): {len(messages)} messages")
         
-        response = await client.post("/chat/completions", json=payload)
-        response.raise_for_status()
-        return response.json()
+        response = await acompletion(
+            model=self.config.model,
+            messages=messages,
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_output_tokens,
+        )
+        return response.model_dump()
     
     async def complete(self, prompt: str) -> str:
         """Simple completion without tools or context management.
@@ -731,23 +569,14 @@ class AsyncLLMClient:
         Returns:
             The completion text
         """
-        client = await self._get_client()
-        
-        payload = {
-            "model": self.config.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3,  # Lower temperature for factual tasks
-            "max_tokens": 2000,
-        }
-        
-        response = await client.post("/chat/completions", json=payload)
-        response.raise_for_status()
-        result = response.json()
-        
-        return result["choices"][0]["message"].get("content", "")
+        response = await acompletion(
+            model=self.config.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,  # Lower temperature for factual tasks
+            max_tokens=2000,
+        )
+        return response.choices[0].message.content or ""
     
     async def close(self):
-        """Close the HTTP client."""
-        if self._client:
-            await self._client.aclose()
-            self._client = None
+        """Cleanup (no-op with litellm, kept for API compatibility)."""
+        pass

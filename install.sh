@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 #
-# Lethe Installer
+# Lethe Installer (lethe2 - local-first)
 # Usage: curl -fsSL https://lethe.gg/install | bash
 #
-# Default: Contained install (Docker/Podman) - safer, limited filesystem access
-# Options:
-#   --unsafe    Install directly on host (full system access)
+# Supports multiple LLM providers: OpenRouter, Anthropic, OpenAI
 #
 
 set -e
@@ -15,35 +13,36 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Config
 REPO_URL="https://github.com/atemerev/lethe.git"
+REPO_BRANCH="lethe2"
 INSTALL_DIR="${LETHE_INSTALL_DIR:-$HOME/.lethe}"
 CONFIG_DIR="${LETHE_CONFIG_DIR:-$HOME/.config/lethe}"
 
-# Parse args
-INSTALL_MODE="contained"
-for arg in "$@"; do
-    case $arg in
-        --unsafe)
-            INSTALL_MODE="native"
-            shift
-            ;;
-        --help|-h)
-            echo "Lethe Installer"
-            echo ""
-            echo "Usage: $0 [OPTIONS]"
-            echo ""
-            echo "Options:"
-            echo "  --unsafe    Install directly on host (full system access)"
-            echo "  --help      Show this help"
-            echo ""
-            echo "Default: Contained install (Docker/Podman) - safer, limited access"
-            exit 0
-            ;;
-    esac
-done
+# Provider defaults
+declare -A PROVIDERS=(
+    ["openrouter"]="OpenRouter (recommended - access to all models)"
+    ["anthropic"]="Anthropic (Claude models directly)"
+    ["openai"]="OpenAI (GPT models directly)"
+)
+declare -A PROVIDER_KEYS=(
+    ["openrouter"]="OPENROUTER_API_KEY"
+    ["anthropic"]="ANTHROPIC_API_KEY"
+    ["openai"]="OPENAI_API_KEY"
+)
+declare -A PROVIDER_MODELS=(
+    ["openrouter"]="openrouter/moonshotai/kimi-k2.5"
+    ["anthropic"]="claude-opus-4-5-20250514"
+    ["openai"]="gpt-5.2"
+)
+declare -A PROVIDER_URLS=(
+    ["openrouter"]="https://openrouter.ai/keys"
+    ["anthropic"]="https://console.anthropic.com/settings/keys"
+    ["openai"]="https://platform.openai.com/api-keys"
+)
 
 print_header() {
     echo -e "${BLUE}"
@@ -52,28 +51,16 @@ print_header() {
     echo "║   █░░ █▀▀ ▀█▀ █░█ █▀▀                                     ║"
     echo "║   █▄▄ ██▄ ░█░ █▀█ ██▄                                     ║"
     echo "║                                                           ║"
-    echo "║   Autonomous Executive Assistant                          ║"
+    echo "║   Autonomous Executive Assistant (v2 - Local First)       ║"
     echo "║                                                           ║"
     echo "╚═══════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
 
-info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-success() {
-    echo -e "${GREEN}[OK]${NC} $1"
-}
-
-warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-    exit 1
-}
+info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+success() { echo -e "${GREEN}[OK]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 detect_os() {
     case "$(uname -s)" in
@@ -84,158 +71,139 @@ detect_os() {
                 echo "linux"
             fi
             ;;
-        Darwin*)
-            echo "mac"
-            ;;
-        *)
-            echo "unknown"
-            ;;
+        Darwin*) echo "mac" ;;
+        *) echo "unknown" ;;
     esac
 }
 
-check_command() {
-    command -v "$1" >/dev/null 2>&1
-}
-
-is_root() {
-    [[ "$(id -u)" -eq 0 ]]
-}
+check_command() { command -v "$1" >/dev/null 2>&1; }
 
 maybe_sudo() {
-    if is_root; then
+    if [[ "$(id -u)" -eq 0 ]]; then
         "$@"
     else
         sudo "$@"
     fi
 }
 
-install_homebrew() {
-    if check_command brew; then
-        success "Homebrew found"
-        return 0
+# Detect existing API keys
+detect_api_keys() {
+    DETECTED_PROVIDERS=()
+    
+    if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+        DETECTED_PROVIDERS+=("openrouter")
+    fi
+    if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+        DETECTED_PROVIDERS+=("anthropic")
+    fi
+    if [ -n "${OPENAI_API_KEY:-}" ]; then
+        DETECTED_PROVIDERS+=("openai")
     fi
     
-    info "Installing Homebrew..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    
-    # Add to PATH for this session
-    if [[ -f "/opt/homebrew/bin/brew" ]]; then
-        eval "$(/opt/homebrew/bin/brew shellenv)"
-    elif [[ -f "/usr/local/bin/brew" ]]; then
-        eval "$(/usr/local/bin/brew shellenv)"
-    elif [[ -f "/home/linuxbrew/.linuxbrew/bin/brew" ]]; then
-        eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-    fi
-    success "Homebrew installed"
-}
-
-install_git() {
-    if check_command git; then
-        success "git found"
-        return 0
-    fi
-    
-    info "Installing git..."
-    OS=$(detect_os)
-    
-    if [[ "$OS" == "mac" ]]; then
-        install_homebrew
-        brew install git
-    elif [[ "$OS" == "linux" ]] || [[ "$OS" == "wsl" ]]; then
-        if check_command apt-get; then
-            maybe_sudo apt-get update -y
-            maybe_sudo apt-get install -y git
-        elif check_command dnf; then
-            maybe_sudo dnf install -y git
-        elif check_command yum; then
-            maybe_sudo yum install -y git
-        elif check_command pacman; then
-            maybe_sudo pacman -S --noconfirm git
-        else
-            # Fallback to Linuxbrew
-            install_homebrew
-            brew install git
+    # Also check .env file if it exists
+    if [ -f "$CONFIG_DIR/.env" ]; then
+        source "$CONFIG_DIR/.env" 2>/dev/null || true
+        if [ -n "${OPENROUTER_API_KEY:-}" ] && [[ ! " ${DETECTED_PROVIDERS[*]} " =~ " openrouter " ]]; then
+            DETECTED_PROVIDERS+=("openrouter")
+        fi
+        if [ -n "${ANTHROPIC_API_KEY:-}" ] && [[ ! " ${DETECTED_PROVIDERS[*]} " =~ " anthropic " ]]; then
+            DETECTED_PROVIDERS+=("anthropic")
+        fi
+        if [ -n "${OPENAI_API_KEY:-}" ] && [[ ! " ${DETECTED_PROVIDERS[*]} " =~ " openai " ]]; then
+            DETECTED_PROVIDERS+=("openai")
         fi
     fi
-    success "git installed"
 }
 
-install_curl() {
-    if check_command curl; then
-        return 0
-    fi
+prompt_provider() {
+    echo ""
+    echo -e "${YELLOW}Select your LLM provider:${NC}"
+    echo ""
     
-    info "Installing curl..."
-    OS=$(detect_os)
-    
-    if [[ "$OS" == "mac" ]]; then
-        install_homebrew
-        brew install curl
-    elif [[ "$OS" == "linux" ]] || [[ "$OS" == "wsl" ]]; then
-        if check_command apt-get; then
-            maybe_sudo apt-get update -y
-            maybe_sudo apt-get install -y curl
-        elif check_command dnf; then
-            maybe_sudo dnf install -y curl
-        elif check_command yum; then
-            maybe_sudo yum install -y curl
-        elif check_command pacman; then
-            maybe_sudo pacman -S --noconfirm curl
-        fi
-    fi
-    success "curl installed"
-}
-
-# Detect container runtime
-detect_container_runtime() {
-    if check_command podman; then
-        echo "podman"
-    elif check_command docker; then
-        echo "docker"
-    else
+    # Show detected keys
+    if [ ${#DETECTED_PROVIDERS[@]} -gt 0 ]; then
+        echo -e "${GREEN}Detected API keys for: ${DETECTED_PROVIDERS[*]}${NC}"
         echo ""
     fi
-}
-
-install_agent_browser() {
-    # Check if already installed
-    if check_command agent-browser; then
-        success "agent-browser found"
-        return 0
-    fi
     
-    info "Installing agent-browser (browser automation)..."
-    
-    # Need npm
-    if ! check_command npm; then
-        OS=$(detect_os)
-        if [[ "$OS" == "mac" ]]; then
-            install_homebrew
-            brew install node
-        elif [[ "$OS" == "linux" ]] || [[ "$OS" == "wsl" ]]; then
-            if check_command apt-get; then
-                maybe_sudo apt-get update -y
-                maybe_sudo apt-get install -y nodejs npm
-            elif check_command dnf; then
-                maybe_sudo dnf install -y nodejs npm
-            elif check_command pacman; then
-                maybe_sudo pacman -S --noconfirm nodejs npm
-            else
-                warn "Could not install npm - please install Node.js manually"
-                return 1
-            fi
+    local i=1
+    for provider in openrouter anthropic openai; do
+        local desc="${PROVIDERS[$provider]}"
+        local detected=""
+        if [[ " ${DETECTED_PROVIDERS[*]} " =~ " $provider " ]]; then
+            detected="${GREEN}[key found]${NC}"
         fi
+        echo -e "  $i) $desc $detected"
+        ((i++))
+    done
+    echo ""
+    
+    local default_choice=1
+    if [[ " ${DETECTED_PROVIDERS[*]} " =~ " anthropic " ]]; then
+        default_choice=2
+    elif [[ " ${DETECTED_PROVIDERS[*]} " =~ " openai " ]]; then
+        default_choice=3
     fi
     
-    # Install agent-browser globally
-    npm install -g agent-browser
-    agent-browser install
-    success "agent-browser installed"
+    read -p "Choose provider [1-3, default=$default_choice]: " choice < /dev/tty
+    choice=${choice:-$default_choice}
+    
+    case $choice in
+        1) SELECTED_PROVIDER="openrouter" ;;
+        2) SELECTED_PROVIDER="anthropic" ;;
+        3) SELECTED_PROVIDER="openai" ;;
+        *) SELECTED_PROVIDER="openrouter" ;;
+    esac
+    
+    success "Selected: $SELECTED_PROVIDER"
 }
 
-prompt_tokens() {
+prompt_model() {
+    local default_model="${PROVIDER_MODELS[$SELECTED_PROVIDER]}"
     echo ""
-    echo -e "${YELLOW}Lethe needs a few things to get started:${NC}"
+    echo -e "${BLUE}Default model for $SELECTED_PROVIDER: ${CYAN}$default_model${NC}"
+    read -p "Press Enter to use default, or enter custom model: " custom_model < /dev/tty
+    
+    if [ -n "$custom_model" ]; then
+        SELECTED_MODEL="$custom_model"
+    else
+        SELECTED_MODEL="$default_model"
+    fi
+    success "Model: $SELECTED_MODEL"
+}
+
+prompt_api_key() {
+    local key_name="${PROVIDER_KEYS[$SELECTED_PROVIDER]}"
+    local key_url="${PROVIDER_URLS[$SELECTED_PROVIDER]}"
+    
+    # Check if already have key
+    local existing_key=""
+    case $SELECTED_PROVIDER in
+        openrouter) existing_key="${OPENROUTER_API_KEY:-}" ;;
+        anthropic) existing_key="${ANTHROPIC_API_KEY:-}" ;;
+        openai) existing_key="${OPENAI_API_KEY:-}" ;;
+    esac
+    
+    if [ -n "$existing_key" ]; then
+        echo ""
+        echo -e "${GREEN}Found existing $key_name${NC}"
+        API_KEY="$existing_key"
+        return
+    fi
+    
+    echo ""
+    echo -e "${BLUE}$key_name required${NC}"
+    echo "   Get your key at: $key_url"
+    echo ""
+    read -p "   $key_name: " API_KEY < /dev/tty
+    if [ -z "$API_KEY" ]; then
+        error "$key_name is required"
+    fi
+}
+
+prompt_telegram() {
+    echo ""
+    echo -e "${YELLOW}Telegram Configuration:${NC}"
     echo ""
     
     echo -e "${BLUE}1. Telegram Bot Token${NC}"
@@ -247,16 +215,7 @@ prompt_tokens() {
     fi
     echo ""
     
-    echo -e "${BLUE}2. Letta API Key${NC}"
-    echo "   Sign up at https://app.letta.com → Settings → API Keys → Create new key"
-    echo ""
-    read -p "   Letta API Key: " LETTA_KEY < /dev/tty
-    if [ -z "$LETTA_KEY" ]; then
-        error "Letta API key is required"
-    fi
-    echo ""
-    
-    echo -e "${BLUE}3. Your Telegram User ID${NC}"
+    echo -e "${BLUE}2. Your Telegram User ID${NC}"
     echo "   Message @userinfobot on Telegram - it replies with your ID (a number like 123456789)"
     echo "   This restricts the bot to only respond to you."
     echo ""
@@ -266,134 +225,107 @@ prompt_tokens() {
     fi
 }
 
-install_native() {
-    OS=$(detect_os)
+install_dependencies() {
+    local OS=$(detect_os)
     info "Detected OS: $OS"
     
-    # Install dependencies if missing
-    info "Checking dependencies..."
+    # Install curl if missing
+    if ! check_command curl; then
+        info "Installing curl..."
+        if [[ "$OS" == "mac" ]]; then
+            brew install curl
+        elif check_command apt-get; then
+            maybe_sudo apt-get update -y && maybe_sudo apt-get install -y curl
+        elif check_command dnf; then
+            maybe_sudo dnf install -y curl
+        fi
+    fi
+    success "curl found"
     
-    install_curl
-    install_git
+    # Install git if missing
+    if ! check_command git; then
+        info "Installing git..."
+        if [[ "$OS" == "mac" ]]; then
+            brew install git
+        elif check_command apt-get; then
+            maybe_sudo apt-get install -y git
+        elif check_command dnf; then
+            maybe_sudo dnf install -y git
+        fi
+    fi
+    success "git found"
     
-    # Install uv (manages Python versions too)
+    # Install uv
     if ! check_command uv; then
         info "Installing uv (Python package manager)..."
         curl -LsSf https://astral.sh/uv/install.sh | sh
         export PATH="$HOME/.local/bin:$PATH"
-        if ! check_command uv; then
-            export PATH="$HOME/.cargo/bin:$PATH"
-        fi
+        export PATH="$HOME/.cargo/bin:$PATH"
     fi
     success "uv found"
     
-    # Check Python version, install via uv if needed
-    NEED_PYTHON=false
-    if ! check_command python3; then
-        NEED_PYTHON=true
-    else
-        PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-        MAJOR=$(echo $PYTHON_VERSION | cut -d. -f1)
-        MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
-        if [ "$MAJOR" -lt 3 ] || ([ "$MAJOR" -eq 3 ] && [ "$MINOR" -lt 11 ]); then
-            NEED_PYTHON=true
-            info "Python $PYTHON_VERSION found, but 3.11+ required"
-        fi
-    fi
-    
-    if [ "$NEED_PYTHON" = true ]; then
+    # Check Python
+    if ! uv python list 2>/dev/null | grep -q "3.1[1-9]"; then
         info "Installing Python 3.12 via uv..."
         uv python install 3.12
-        success "Python 3.12 installed"
-    else
-        success "Python $PYTHON_VERSION found"
     fi
-    
-    # Clone or update repo
+    success "Python 3.11+ available"
+}
+
+clone_repo() {
     if [ -d "$INSTALL_DIR" ]; then
         info "Updating existing installation..."
         cd "$INSTALL_DIR"
-        git pull
+        git fetch origin
+        git checkout "$REPO_BRANCH"
+        git pull origin "$REPO_BRANCH"
     else
         info "Cloning Lethe..."
-        git clone "$REPO_URL" "$INSTALL_DIR"
+        git clone -b "$REPO_BRANCH" "$REPO_URL" "$INSTALL_DIR"
         cd "$INSTALL_DIR"
     fi
     success "Repository ready"
-    
-    # Create venv and install deps
-    info "Installing dependencies..."
-    cd "$INSTALL_DIR"
-    uv sync
-    success "Dependencies installed"
-    
-    # Install agent-browser for browser automation
-    install_agent_browser
-    
-    # Create config directory
+}
+
+setup_config() {
     mkdir -p "$CONFIG_DIR"
     
-    # Prompt for tokens
-    prompt_tokens
+    local key_name="${PROVIDER_KEYS[$SELECTED_PROVIDER]}"
     
-    # Create .env file
-    cat > "$INSTALL_DIR/.env" << EOF
+    cat > "$CONFIG_DIR/.env" << EOF
+# Lethe Configuration
+# Generated by installer on $(date)
+
+# Telegram
 TELEGRAM_BOT_TOKEN=$TELEGRAM_TOKEN
-LETTA_API_KEY=$LETTA_KEY
 TELEGRAM_ALLOWED_USER_IDS=$TELEGRAM_USER_ID
+
+# LLM Provider
+LLM_PROVIDER=$SELECTED_PROVIDER
+LLM_MODEL=$SELECTED_MODEL
+$key_name=$API_KEY
+
+# Optional: Heartbeat interval (seconds, default 900 = 15 min)
+# HEARTBEAT_INTERVAL=900
+# HEARTBEAT_ENABLED=true
+
+# Optional: Hippocampus (memory recall)
+# HIPPOCAMPUS_ENABLED=true
 EOF
-    chmod 600 "$INSTALL_DIR/.env"
-    success "Configuration saved"
+
+    # Symlink to install dir
+    ln -sf "$CONFIG_DIR/.env" "$INSTALL_DIR/.env"
     
-    # Set up service based on OS
-    SERVICE_SETUP=false
-    case $OS in
-        linux|wsl)
-            if check_command systemctl; then
-                setup_systemd
-                SERVICE_SETUP=true
-            else
-                warn "systemd not available - skipping service setup"
-            fi
-            ;;
-        mac)
-            setup_launchd
-            SERVICE_SETUP=true
-            ;;
-    esac
-    
-    echo ""
-    success "Lethe installed successfully!"
-    echo ""
-    
-    if [ "$SERVICE_SETUP" = true ]; then
-        if [ "$OS" = "mac" ]; then
-            echo "Commands:"
-            echo "  Start:   launchctl start com.lethe.agent"
-            echo "  Stop:    launchctl stop com.lethe.agent"
-            echo "  Logs:    tail -f ~/Library/Logs/lethe.log"
-        else
-            echo "Commands:"
-            echo "  Start:   systemctl --user start lethe"
-            echo "  Stop:    systemctl --user stop lethe"
-            echo "  Logs:    journalctl --user -u lethe -f"
-            echo "  Status:  systemctl --user status lethe"
-        fi
-    else
-        echo "To run Lethe manually:"
-        echo "  cd $INSTALL_DIR && uv run lethe"
-    fi
-    echo ""
-    echo -e "${GREEN}Next step:${NC} Open Telegram and message your bot!"
-    echo ""
-    echo "Try:"
-    echo "  \"Hello! Tell me about yourself\""
-    echo "  \"Remind me to call mom tomorrow at 5pm\""
-    echo "  \"What tasks do I have pending?\""
+    success "Configuration saved to $CONFIG_DIR/.env"
 }
 
 setup_systemd() {
-    info "Setting up systemd service..."
+    local OS=$(detect_os)
+    
+    if [[ "$OS" != "linux" && "$OS" != "wsl" ]]; then
+        warn "Systemd not available on $OS, skipping service setup"
+        return
+    fi
     
     mkdir -p "$HOME/.config/systemd/user"
     
@@ -405,10 +337,10 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/.venv/bin/python -m lethe
-Restart=on-failure
+ExecStart=$HOME/.local/bin/uv run lethe
+Restart=always
 RestartSec=10
-Environment=PATH=$INSTALL_DIR/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment="PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
 [Install]
 WantedBy=default.target
@@ -417,202 +349,70 @@ EOF
     systemctl --user daemon-reload
     systemctl --user enable lethe
     systemctl --user start lethe
-    success "Systemd service configured and started"
+    
+    success "Systemd service installed and started"
+    info "View logs: journalctl --user -u lethe -f"
 }
 
-setup_launchd() {
-    info "Setting up launchd service..."
-    
-    mkdir -p "$HOME/Library/LaunchAgents"
-    
-    cat > "$HOME/Library/LaunchAgents/com.lethe.agent.plist" << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.lethe.agent</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>$INSTALL_DIR/.venv/bin/python</string>
-        <string>-m</string>
-        <string>lethe</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>$INSTALL_DIR</string>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>$HOME/Library/Logs/lethe.log</string>
-    <key>StandardErrorPath</key>
-    <string>$HOME/Library/Logs/lethe.error.log</string>
-</dict>
-</plist>
-EOF
-
-    launchctl load "$HOME/Library/LaunchAgents/com.lethe.agent.plist"
-    success "Launchd service configured and started"
+install_deps_and_run() {
+    cd "$INSTALL_DIR"
+    info "Installing Python dependencies..."
+    uv sync
+    success "Dependencies installed"
 }
 
-install_contained() {
-    info "Installing in container mode (safety first)..."
+main() {
+    print_header
     
-    OS=$(detect_os)
+    # Parse args
+    for arg in "$@"; do
+        case $arg in
+            --help|-h)
+                echo "Usage: $0"
+                echo ""
+                echo "Installs Lethe autonomous AI assistant."
+                echo "Supports OpenRouter, Anthropic, and OpenAI as LLM providers."
+                exit 0
+                ;;
+        esac
+    done
     
-    # On Mac, ensure Homebrew is available for easy podman/docker install
-    if [[ "$OS" == "mac" ]]; then
-        install_homebrew
-    fi
+    # Detect existing keys
+    detect_api_keys
     
-    RUNTIME=$(detect_container_runtime)
-    if [ -z "$RUNTIME" ]; then
-        echo -e "${RED}[ERROR]${NC} Docker or Podman is required for contained installation."
-        echo ""
-        echo "Install one of:"
-        echo ""
-        echo "  Podman (recommended for Linux):"
-        echo "    Fedora:       sudo dnf install podman"
-        echo "    Ubuntu/Debian: sudo apt install podman"
-        echo "    macOS:        brew install podman && podman machine init && podman machine start"
-        echo ""
-        echo "  Docker:"
-        echo "    All platforms: https://docs.docker.com/get-docker/"
-        echo ""
-        exit 1
-    fi
-    success "Container runtime: $RUNTIME"
-    
-    # Create directories
-    mkdir -p "$CONFIG_DIR"
-    mkdir -p "$INSTALL_DIR"
-    mkdir -p "$HOME/lethe/workspace"
-    mkdir -p "$HOME/lethe/data"
-    
-    # Prompt for tokens
-    prompt_tokens
-    
-    # Create .env file
-    cat > "$CONFIG_DIR/.env" << EOF
-TELEGRAM_BOT_TOKEN=$TELEGRAM_TOKEN
-LETTA_API_KEY=$LETTA_KEY
-TELEGRAM_ALLOWED_USER_IDS=$TELEGRAM_USER_ID
-EOF
-    chmod 600 "$CONFIG_DIR/.env"
-    success "Configuration saved"
-    
-    # Build container
-    info "Building container..."
-    
-    # Create Dockerfile if not exists
-    if [ ! -f "$INSTALL_DIR/Dockerfile" ]; then
-        mkdir -p "$INSTALL_DIR"
-        cat > "$INSTALL_DIR/Dockerfile" << 'EOF'
-FROM python:3.12-slim
-
-# Install system deps including Node.js for agent-browser
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl nodejs npm && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:$PATH"
-
-# Install agent-browser for browser automation
-RUN npm install -g agent-browser && agent-browser install
-
-WORKDIR /app
-
-# Clone and install
-RUN git clone https://github.com/atemerev/lethe.git .
-RUN uv sync
-
-# Create data directories
-RUN mkdir -p /app/workspace /app/data
-
-VOLUME /app/workspace
-VOLUME /app/data
-
-CMD ["uv", "run", "lethe"]
-EOF
-    fi
-    
-    $RUNTIME build -t lethe:latest "$INSTALL_DIR"
-    success "Container built"
-    
-    # Detect timezone
-    if [ -f /etc/timezone ]; then
-        HOST_TZ=$(cat /etc/timezone)
-    elif [ -f /etc/localtime ]; then
-        HOST_TZ=$(readlink /etc/localtime | sed 's|.*/zoneinfo/||')
-    else
-        HOST_TZ="UTC"
-    fi
-    
-    # Create run script (:Z for SELinux compatibility, harmless elsewhere)
-    cat > "$INSTALL_DIR/run-lethe.sh" << EOF
-#!/bin/bash
-$RUNTIME run -d \\
-    --name lethe \\
-    --restart unless-stopped \\
-    --env-file "$CONFIG_DIR/.env" \\
-    -e TZ=$HOST_TZ \\
-    -v "$HOME/lethe/workspace:/app/workspace:Z" \\
-    -v "$HOME/lethe/data:/app/data:Z" \\
-    lethe:latest
-EOF
-    chmod +x "$INSTALL_DIR/run-lethe.sh"
-    
-    # Start container
-    info "Starting container..."
-    "$INSTALL_DIR/run-lethe.sh"
-    success "Container started"
+    # Prompts
+    prompt_provider
+    prompt_model
+    prompt_api_key
+    prompt_telegram
     
     echo ""
-    success "Lethe installed in container mode!"
+    info "Installing Lethe..."
     echo ""
-    echo "Commands:"
-    echo "  Start:   $RUNTIME start lethe"
-    echo "  Stop:    $RUNTIME stop lethe"
-    echo "  Logs:    $RUNTIME logs -f lethe"
-    echo "  Shell:   $RUNTIME exec -it lethe bash"
+    
+    # Install
+    install_dependencies
+    clone_repo
+    install_deps_and_run
+    setup_config
+    setup_systemd
+    
     echo ""
-    echo "Your Lethe directories:"
+    echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}  Lethe installed successfully!${NC}"
+    echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
     echo ""
-    echo "  ~/lethe/workspace/"
-    echo "      Put documents, images, or any files here for Lethe to access."
-    echo "      Ask it to read, summarize, or work with your files."
+    echo "  Provider: $SELECTED_PROVIDER"
+    echo "  Model: $SELECTED_MODEL"
     echo ""
-    echo "  ~/lethe/data/"
-    echo "      Databases and memory (managed automatically)."
+    echo "  Message your bot on Telegram to get started!"
     echo ""
-    echo "Lethe can install CLI tools in the container. For example, ask it to"
-    echo "install 'gogcli' (github.com/steipete/gogcli) for Gmail/Calendar access."
+    echo "  Useful commands:"
+    echo "    View logs:     journalctl --user -u lethe -f"
+    echo "    Restart:       systemctl --user restart lethe"
+    echo "    Stop:          systemctl --user stop lethe"
+    echo "    Config:        $CONFIG_DIR/.env"
     echo ""
-    echo -e "${GREEN}Next step:${NC} Open Telegram and message your bot!"
-    echo ""
-    echo "Try:"
-    echo "  \"Hello! Tell me about yourself\""
-    echo "  \"Remind me to call mom tomorrow at 5pm\""
-    echo "  \"What tasks do I have pending?\""
 }
 
-# Main
-print_header
-
-echo "Install mode: $INSTALL_MODE"
-echo ""
-
-case $INSTALL_MODE in
-    native)
-        install_native
-        ;;
-    contained)
-        install_contained
-        ;;
-    *)
-        error "Unknown install mode: $INSTALL_MODE"
-        ;;
-esac
+main "$@"
