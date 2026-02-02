@@ -40,6 +40,15 @@ from lethe.tools.web_search import (
     is_available as web_search_available,
 )
 
+from lethe.tools.telegram_tools import (
+    telegram_react_async as telegram_react,
+    telegram_send_message_async as telegram_send_message,
+    telegram_send_file_async as telegram_send_file,
+    set_telegram_context,
+    set_last_message_id,
+    clear_telegram_context,
+)
+
 
 def _python_type_to_json(py_type) -> str:
     """Convert Python type to JSON schema type."""
@@ -164,6 +173,11 @@ def get_all_tools() -> list[tuple[Callable, dict]]:
         # Web search (optional - only if EXA_API_KEY is set)
         (web_search, None),
         (fetch_webpage, None),
+        
+        # Telegram tools
+        (telegram_react, "telegram_react"),
+        (telegram_send_message, "telegram_send_message"),
+        (telegram_send_file, "telegram_send_file"),
     ]
     
     result = []
@@ -195,6 +209,10 @@ def get_tool_by_name(name: str) -> Optional[Callable]:
         # Web search
         "web_search": web_search,
         "fetch_webpage": fetch_webpage,
+        # Telegram
+        "telegram_react": telegram_react,
+        "telegram_send_message": telegram_send_message,
+        "telegram_send_file": telegram_send_file,
     }
     return tools.get(name)
 
@@ -227,4 +245,11 @@ __all__ = [
     "web_search",
     "fetch_webpage",
     "web_search_available",
+    # Telegram
+    "telegram_react",
+    "telegram_send_message", 
+    "telegram_send_file",
+    "set_telegram_context",
+    "set_last_message_id",
+    "clear_telegram_context",
 ]

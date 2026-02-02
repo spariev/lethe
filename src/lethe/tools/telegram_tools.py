@@ -225,3 +225,60 @@ def telegram_send_file(
         JSON with success status and message details
     """
     raise Exception("Client-side execution required")
+
+
+# Context variable for last message (for reactions)
+_last_message_id: ContextVar[Optional[int]] = ContextVar('last_message_id', default=None)
+
+
+def set_last_message_id(message_id: int):
+    """Set the last message ID for reaction support."""
+    _last_message_id.set(message_id)
+
+
+async def telegram_react_async(emoji: str = "👍") -> str:
+    """React to the user's last message with an emoji.
+    
+    Args:
+        emoji: Emoji to react with (e.g., "👍", "❤️", "😂", "🔥", "👀")
+    
+    Returns:
+        JSON with success status
+    """
+    from aiogram.types import ReactionTypeEmoji
+    
+    bot = _current_bot.get()
+    chat_id = _current_chat_id.get()
+    message_id = _last_message_id.get()
+    
+    if not bot or not chat_id or not message_id:
+        raise RuntimeError("Telegram context not set or no message to react to.")
+    
+    await bot.set_message_reaction(
+        chat_id=chat_id,
+        message_id=message_id,
+        reaction=[ReactionTypeEmoji(emoji=emoji)]
+    )
+    
+    return json.dumps({
+        "success": True,
+        "emoji": emoji,
+        "message_id": message_id,
+    })
+
+
+@_is_tool
+def telegram_react(emoji: str = "👍") -> str:
+    """React to the user's last message with an emoji.
+    
+    Use this to acknowledge messages, show approval, or add emotional response.
+    Common emojis: 👍 (ok/approve), ❤️ (love), 😂 (funny), 🔥 (impressive), 
+    👀 (interesting), 🤔 (thinking), ✅ (done), 🎉 (celebrate)
+    
+    Args:
+        emoji: Emoji to react with
+    
+    Returns:
+        JSON with success status
+    """
+    raise Exception("Client-side execution required")

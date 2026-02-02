@@ -72,7 +72,14 @@ async def run():
     # Message processing callback
     async def process_message(chat_id: int, user_id: int, message: str, metadata: dict, interrupt_check):
         """Process a message from Telegram."""
+        from lethe.tools import set_telegram_context, set_last_message_id, clear_telegram_context
+        
         logger.info(f"Processing message from {user_id}: {message[:50]}...")
+        
+        # Set telegram context for tools (reactions, sending messages)
+        set_telegram_context(telegram_bot.bot, chat_id)
+        if metadata.get("message_id"):
+            set_last_message_id(metadata["message_id"])
         
         # Start typing indicator
         await telegram_bot.start_typing(chat_id)
@@ -112,6 +119,7 @@ async def run():
             await telegram_bot.send_message(chat_id, f"Error: {e}")
         finally:
             await telegram_bot.stop_typing(chat_id)
+            clear_telegram_context()
 
     # Initialize Telegram bot
     telegram_bot = TelegramBot(
