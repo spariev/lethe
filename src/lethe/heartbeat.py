@@ -44,18 +44,15 @@ End with either:
 """
 
 
-SUMMARIZE_HEARTBEAT_PROMPT = """Evaluate this AI assistant's heartbeat check-in:
+SUMMARIZE_HEARTBEAT_PROMPT = """You are filtering an AI assistant's heartbeat message. Only pass through genuinely urgent items.
 
+MESSAGE:
 {response}
 
----
-RESPOND WITH EXACTLY ONE OF:
-1. The word "ok" (if nothing urgent)
-2. A brief 1-2 sentence message (only if genuinely time-sensitive)
+If nothing urgent, respond with just: ok
+If urgent, respond with just the urgent part (1-2 sentences max).
 
-Criteria: Would you interrupt someone's work for this? If not → "ok"
-
-YOUR RESPONSE (no reasoning, just ok or the message):"""
+Urgent = would interrupt someone's work. Routine check-ins, status updates, ponderings → not urgent."""
 
 
 class Heartbeat:
@@ -193,18 +190,7 @@ class Heartbeat:
                 final_response = evaluated.strip() if evaluated else "ok"
                 if "</think>" in final_response:
                     final_response = final_response.split("</think>")[-1].strip()
-                # Strip any instruction echoing from model response
-                prefixes_to_strip = [
-                    "A brief 1-2 sentence message (only if genuinely time-sensitive):",
-                    "A brief 1-2 sentence message:",
-                    "2. A brief",
-                    "1. The word",
-                ]
-                for prefix in prefixes_to_strip:
-                    if final_response.startswith(prefix):
-                        final_response = final_response[len(prefix):].strip()
-                
-                # Also handle reasoning_content that some models include
+                # Handle reasoning_content that some models include
                 if final_response.startswith("The user is asking") or final_response.startswith("Analysis:"):
                     # Model outputted reasoning, try to find actual answer
                     lines = final_response.split("\n")
