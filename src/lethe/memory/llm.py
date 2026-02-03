@@ -641,6 +641,9 @@ class AsyncLLMClient:
                 ))
                 
                 # Execute tools and add results
+                # Collect images to inject AFTER all tool results (to not break tool pairing)
+                images_to_inject = []
+                
                 for tool_call in tool_calls:
                     tool_name = tool_call["function"]["name"].strip()  # Strip whitespace (model quirk)
                     tool_args = json.loads(tool_call["function"]["arguments"])
@@ -673,16 +676,15 @@ class AsyncLLMClient:
                         result_for_context = {k: v for k, v in result.items() if k != "_image_attachment"}
                         result = result_for_context
                     
-                    # Check for image view in result (inject into context for model to see)
-                    image_to_inject = None
+                    # Check for image view in result (collect for injection after all tool results)
                     if isinstance(result, dict) and "_image_view" in result:
                         img = result["_image_view"]
                         if img.get("data") and img.get("mime_type"):
-                            image_to_inject = {
+                            images_to_inject.append({
                                 "mime_type": img["mime_type"],
                                 "data": img["data"],
                                 "path": img.get("path", "image")
-                            }
+                            })
                         # Remove from result for context
                         result_for_context = {k: v for k, v in result.items() if k != "_image_view"}
                         result = result_for_context
@@ -693,23 +695,23 @@ class AsyncLLMClient:
                         content=str(result),
                         tool_call_id=tool_id,
                     ))
-                    
-                    # Inject image as user message if present (model sees it on next iteration)
-                    if image_to_inject:
-                        multimodal_content = [
-                            {"type": "text", "text": f"[Image from {image_to_inject['path']}]"},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{image_to_inject['mime_type']};base64,{image_to_inject['data']}"
-                                }
+                
+                # Inject images AFTER all tool results (Anthropic requires tool_result immediately after tool_use)
+                for image in images_to_inject:
+                    multimodal_content = [
+                        {"type": "text", "text": f"[Image from {image['path']}]"},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{image['mime_type']};base64,{image['data']}"
                             }
-                        ]
-                        self.context.add_message(Message(
-                            role="user",
-                            content=multimodal_content,
-                        ))
-                        logger.info(f"  Injected image into context: {image_to_inject['path']}")
+                        }
+                    ]
+                    self.context.add_message(Message(
+                        role="user",
+                        content=multimodal_content,
+                    ))
+                    logger.info(f"Injected image into context: {image['path']}")
                 
                 continue  # Loop to get next response
             
