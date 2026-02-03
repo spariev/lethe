@@ -664,7 +664,7 @@ class AsyncLLMClient:
                     
                     logger.info(f"  Result: {str(result)[:100]}...")
                     
-                    # Check for image attachment in result
+                    # Check for image attachment in result (send to user)
                     if isinstance(result, dict) and "_image_attachment" in result:
                         img = result["_image_attachment"]
                         if on_image and img.get("path"):
@@ -673,12 +673,43 @@ class AsyncLLMClient:
                         result_for_context = {k: v for k, v in result.items() if k != "_image_attachment"}
                         result = result_for_context
                     
+                    # Check for image view in result (inject into context for model to see)
+                    image_to_inject = None
+                    if isinstance(result, dict) and "_image_view" in result:
+                        img = result["_image_view"]
+                        if img.get("data") and img.get("mime_type"):
+                            image_to_inject = {
+                                "mime_type": img["mime_type"],
+                                "data": img["data"],
+                                "path": img.get("path", "image")
+                            }
+                        # Remove from result for context
+                        result_for_context = {k: v for k, v in result.items() if k != "_image_view"}
+                        result = result_for_context
+                    
                     # Add tool result
                     self.context.add_message(Message(
                         role="tool",
                         content=str(result),
                         tool_call_id=tool_id,
                     ))
+                    
+                    # Inject image as user message if present (model sees it on next iteration)
+                    if image_to_inject:
+                        multimodal_content = [
+                            {"type": "text", "text": f"[Image from {image_to_inject['path']}]"},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{image_to_inject['mime_type']};base64,{image_to_inject['data']}"
+                                }
+                            }
+                        ]
+                        self.context.add_message(Message(
+                            role="user",
+                            content=multimodal_content,
+                        ))
+                        logger.info(f"  Injected image into context: {image_to_inject['path']}")
                 
                 continue  # Loop to get next response
             

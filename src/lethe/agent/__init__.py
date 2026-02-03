@@ -319,6 +319,56 @@ should be working now
                 "_image_attachment": {"path": file_path}
             }
         
+        def view_image(file_path: str) -> dict:
+            """View an image file - the image will be shown to you in context.
+            
+            Use this to look at images on disk, screenshots you took, or images you generated.
+            The image will be injected into the conversation so you can see and analyze it.
+            
+            Args:
+                file_path: Path to the image file to view
+            """
+            import os
+            import base64
+            
+            if not os.path.exists(file_path):
+                return {"status": "error", "message": f"File not found: {file_path}"}
+            
+            # Check file extension
+            ext = file_path.lower().split('.')[-1]
+            mime_types = {
+                'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+                'png': 'image/png', 'gif': 'image/gif',
+                'webp': 'image/webp', 'bmp': 'image/bmp'
+            }
+            
+            if ext not in mime_types:
+                return {"status": "error", "message": f"Unsupported image format: {ext}"}
+            
+            mime_type = mime_types[ext]
+            
+            # Read and encode image
+            try:
+                with open(file_path, 'rb') as f:
+                    image_data = base64.b64encode(f.read()).decode('utf-8')
+                
+                # Check file size (limit to ~10MB base64)
+                if len(image_data) > 10_000_000:
+                    return {"status": "error", "message": f"Image too large: {len(image_data)//1_000_000}MB"}
+                
+                # Return with _image_view to inject into context
+                return {
+                    "status": "ok",
+                    "message": f"Viewing image: {file_path}",
+                    "_image_view": {
+                        "path": file_path,
+                        "mime_type": mime_type,
+                        "data": image_data
+                    }
+                }
+            except Exception as e:
+                return {"status": "error", "message": f"Failed to read image: {e}"}
+        
         def list_tools() -> str:
             """List all available tools grouped by category.
             
@@ -363,7 +413,7 @@ should be working now
         # Add all memory tools
         for func in [memory_read, memory_update, memory_append, 
                      archival_search, archival_insert, conversation_search,
-                     send_image, list_tools]:
+                     send_image, view_image, list_tools]:
             self.llm.add_tool(func)
     
     def add_tool(self, func: Callable):
