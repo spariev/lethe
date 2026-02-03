@@ -428,28 +428,35 @@ class ContextWindow:
             self.messages = clean_messages
     
     def build_messages(self) -> List[Dict]:
-        """Build messages array for API call (Letta-style structure)."""
+        """Build messages array for API call (Letta-style structure with prompt caching)."""
         # Clean orphaned tool messages before building
         self._clean_orphaned_tool_messages()
         
-        # Build system content with clear sections
-        system_parts = []
+        # Build system as array of content blocks for Anthropic prompt caching
+        # Static content (cacheable): system prompt + memory blocks
+        # Dynamic content (not cached): summary
         
-        # 1. System prompt (persona + rules)
-        system_parts.append(self.system_prompt)
+        system_content = []
         
-        # 2. Memory blocks + metadata (Letta-style, already formatted by MemoryStore)
+        # 1. Static block: System prompt + memory blocks (CACHED)
+        # These rarely change, so we cache them together
+        static_parts = [self.system_prompt]
         if self.memory_context:
-            system_parts.append(self.memory_context)
+            static_parts.append(self.memory_context)
         
-        # 3. Conversation summary (if any)
+        static_text = "\n".join(static_parts)
+        system_content.append({
+            "type": "text",
+            "text": static_text,
+            "cache_control": {"type": "ephemeral"}  # Cache for 5 minutes
+        })
+        
+        # 2. Dynamic block: Conversation summary (NOT cached - changes frequently)
         if self.summary:
-            system_parts.append(f"""
-<conversation_summary>
-{self.summary}
-</conversation_summary>""")
-        
-        system_content = "\n".join(system_parts)
+            system_content.append({
+                "type": "text",
+                "text": f"\n<conversation_summary>\n{self.summary}\n</conversation_summary>"
+            })
         
         messages = [{"role": "system", "content": system_content}]
         
