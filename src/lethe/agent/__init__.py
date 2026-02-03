@@ -95,13 +95,10 @@ class Agent:
         summarize_count = self.settings.llm_messages_summarize
         total_needed = load_count + summarize_count
         
-        # Get all messages we need
+        # Get all messages we need (get_recent returns oldest-first)
         all_messages = self.memory.messages.get_recent(total_needed)
         if not all_messages:
             return
-        
-        # Reverse to chronological order (oldest first)
-        all_messages = list(reversed(all_messages))
         
         # Split into messages to summarize and messages to load verbatim
         if len(all_messages) > load_count:
