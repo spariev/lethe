@@ -160,11 +160,9 @@ Summary:"""
             return ""
     
     def _build_system_prompt(self) -> str:
-        """Build system prompt from persona block in workspace."""
-        # Read from workspace memory blocks (not config seeds)
-        persona_block = self.memory.blocks.get_by_label("persona")
-        
-        base_prompt = persona_block["value"] if persona_block else "You are Lethe, an autonomous AI assistant."
+        """Build system prompt with rules (persona is in memory_blocks, not duplicated here)."""
+        # Minimal base - persona details are in memory_blocks section
+        base_prompt = "You are Lethe, an autonomous AI assistant with persistent memory."
         
         # Hard requirements appended to all prompts (XML tags work better with Kimi)
         requirements = """
