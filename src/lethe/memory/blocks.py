@@ -222,8 +222,8 @@ class BlockManager:
                     continue
                 blocks.append(block)
         
-        # Order: human, project, tools, tasks, then persona LAST (closest to messages for attention)
-        order = {"human": 0, "project": 1, "tools": 2, "tasks": 3, "persona": 99}
+        # Order: project, tools, tasks, persona, human (human last = closest to messages)
+        order = {"project": 0, "tools": 1, "tasks": 2, "persona": 3, "human": 4}
         return sorted(blocks, key=lambda b: (order.get(b["label"], 50), b["label"]))
     
     def str_replace(self, label: str, old_str: str, new_str: str) -> bool:
