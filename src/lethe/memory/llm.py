@@ -15,25 +15,9 @@ import logging
 import litellm
 from litellm import acompletion, completion
 
+from lethe.utils import strip_model_tags
+
 logger = logging.getLogger(__name__)
-
-
-def strip_thinking_tags(content: str) -> str:
-    """Strip reasoning/wrapper tags from model output.
-    
-    Some models (Kimi, Claude with extended thinking) output reasoning in these tags.
-    """
-    import re
-    if not content:
-        return content
-    # Strip thinking blocks
-    content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
-    content = re.sub(r'<thinking>.*?</thinking>', '', content, flags=re.DOTALL)
-    # Strip result wrapper (keep inner content)
-    content = re.sub(r'<result>\s*', '', content)
-    content = re.sub(r'\s*</result>', '', content)
-    return content.strip()
-
 
 # Suppress litellm's verbose logging
 litellm.suppress_debug_info = True
@@ -666,7 +650,7 @@ class AsyncLLMClient:
             assistant_msg = choice["message"]
             
             # Get content (might be present even with tool calls)
-            content = strip_thinking_tags(assistant_msg.get("content") or "")
+            content = strip_model_tags(assistant_msg.get("content") or "")
             
             # Handle tool calls
             tool_calls = assistant_msg.get("tool_calls")
@@ -674,7 +658,7 @@ class AsyncLLMClient:
             # Callback with intermediate message (only when there are tool calls - i.e. more work to do)
             # Don't callback with final response - that's returned and handled by caller
             if content and on_message and tool_calls:
-                await on_message(strip_thinking_tags(content))
+                await on_message(strip_model_tags(content))
             if tool_calls:
                 # Add assistant message with tool calls
                 self.context.add_message(Message(
@@ -770,7 +754,7 @@ class AsyncLLMClient:
                 content="[Please provide a brief response about what you just did]"
             ))
             response = await self._call_api_no_tools()
-            content = strip_thinking_tags(response["choices"][0]["message"].get("content", ""))
+            content = strip_model_tags(response["choices"][0]["message"].get("content", ""))
             if content:
                 self.context.add_message(Message(role="assistant", content=content))
                 return content
@@ -792,7 +776,7 @@ class AsyncLLMClient:
         # Hit continuation limit - request final response without tools
         logger.warning(f"Max continuation depth reached, requesting final response")
         response = await self._call_api_no_tools()
-        content = strip_thinking_tags(response["choices"][0]["message"].get("content", ""))
+        content = strip_model_tags(response["choices"][0]["message"].get("content", ""))
         
         if content:
             self.context.add_message(Message(role="assistant", content=content))

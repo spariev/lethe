@@ -11,6 +11,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Callable, Awaitable, Optional
 
+from lethe.utils import strip_model_tags
+
 logger = logging.getLogger(__name__)
 
 # Default interval in seconds (15 minutes)
@@ -186,19 +188,8 @@ class Heartbeat:
                 prompt = SUMMARIZE_HEARTBEAT_PROMPT.format(response=response)
                 evaluated = await self.summarize_callback(prompt)
                 
-                # Strip model reasoning (some models output <think>...</think> blocks)
-                final_response = evaluated.strip() if evaluated else "ok"
-                if "</think>" in final_response:
-                    final_response = final_response.split("</think>")[-1].strip()
-                # Handle reasoning_content that some models include
-                if final_response.startswith("The user is asking") or final_response.startswith("Analysis:"):
-                    # Model outputted reasoning, try to find actual answer
-                    lines = final_response.split("\n")
-                    # Take last non-empty line as the actual response
-                    for line in reversed(lines):
-                        if line.strip() and not line.startswith("So I"):
-                            final_response = line.strip()
-                            break
+                # Strip model reasoning tags
+                final_response = strip_model_tags(evaluated) if evaluated else "ok"
             else:
                 final_response = response.strip()
             
