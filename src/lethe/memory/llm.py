@@ -673,8 +673,20 @@ class AsyncLLMClient:
                 
                 for tool_call in tool_calls:
                     tool_name = tool_call["function"]["name"].strip()  # Strip whitespace (model quirk)
-                    tool_args = json.loads(tool_call["function"]["arguments"])
                     tool_id = tool_call["id"]
+                    
+                    # Parse tool arguments (may be malformed JSON from some models)
+                    try:
+                        tool_args = json.loads(tool_call["function"]["arguments"])
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Tool {tool_name} has malformed JSON args: {e}")
+                        # Add error result and continue
+                        self.context.add_message(Message(
+                            role="tool",
+                            content=f"Error: malformed tool arguments - {e}",
+                            tool_call_id=tool_id,
+                        ))
+                        continue
                     
                     logger.info(f"Executing tool: {tool_name}({list(tool_args.keys())})")
                     
