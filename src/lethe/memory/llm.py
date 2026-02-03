@@ -460,12 +460,11 @@ class ContextWindow:
         
         messages = [{"role": "system", "content": system_content}]
         
-        # Build message array with timestamps
+        # Build message array with timestamps on user messages only
+        # (Assistant sees when user said things, but doesn't mimic timestamp format)
         for msg in self.messages:
-            # Format content with timestamp for user/assistant messages
             content = msg.content
-            if msg.role in ("user", "assistant") and not msg.tool_calls:
-                # Don't add timestamp to tool-related messages
+            if msg.role == "user" and not msg.tool_calls:
                 timestamp = msg.format_timestamp()
                 if timestamp and isinstance(content, str):
                     content = f"[{timestamp}] {content}"
