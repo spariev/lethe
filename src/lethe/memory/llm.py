@@ -741,8 +741,22 @@ class AsyncLLMClient:
                 continue  # Loop to get next response
             
             # No tool calls - we have final response
-            self.context.add_message(Message(role="assistant", content=content))
-            return content
+            if content:
+                self.context.add_message(Message(role="assistant", content=content))
+                return content
+            
+            # Empty response after tool calls - prompt for actual reply
+            logger.warning("Empty response after tool calls, requesting final message")
+            self.context.add_message(Message(
+                role="user",
+                content="[Please provide a brief response about what you just did]"
+            ))
+            response = await self._call_api_no_tools()
+            content = response["choices"][0]["message"].get("content", "")
+            if content:
+                self.context.add_message(Message(role="assistant", content=content))
+                return content
+            return "Done."
         
         # Max iterations reached - continue with another batch automatically
         if _continuation_depth < MAX_CONTINUATION_DEPTH:
