@@ -460,13 +460,38 @@ class ContextWindow:
         
         messages = [{"role": "system", "content": system_content}]
         
+        # Find indices of image messages (to keep only most recent)
+        image_indices = []
+        for i, msg in enumerate(self.messages):
+            if isinstance(msg.content, list):
+                for part in msg.content:
+                    if isinstance(part, dict) and part.get("type") == "image_url":
+                        image_indices.append(i)
+                        break
+        
+        # Keep only last 2 images, replace older ones with placeholders
+        old_image_indices = set(image_indices[:-2]) if len(image_indices) > 2 else set()
+        
         # Build message array with timestamps on user messages only
         # (Assistant sees when user said things, but doesn't mimic timestamp format)
-        for msg in self.messages:
+        for i, msg in enumerate(self.messages):
             content = msg.content
-            if msg.role == "user" and not msg.tool_calls:
+            
+            # Replace old images with placeholder text
+            if i in old_image_indices and isinstance(content, list):
+                # Extract image path from text part
+                path = "image"
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        text = part.get("text", "")
+                        if "Image from" in text:
+                            path = text.replace("[Image from ", "").replace("]", "").strip()
+                            break
+                content = f"[Previously viewed image: {path}]"
+            
+            if msg.role == "user" and not msg.tool_calls and isinstance(content, str):
                 timestamp = msg.format_timestamp()
-                if timestamp and isinstance(content, str):
+                if timestamp:
                     content = f"[{timestamp}] {content}"
             
             m = {"role": msg.role, "content": content}
