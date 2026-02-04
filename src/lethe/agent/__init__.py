@@ -97,6 +97,7 @@ class Agent:
         
         # Get all messages we need (get_recent returns oldest-first)
         all_messages = self.memory.messages.get_recent(total_needed)
+        logger.info(f"Found {len(all_messages) if all_messages else 0} messages in database (requested {total_needed})")
         if not all_messages:
             return
         

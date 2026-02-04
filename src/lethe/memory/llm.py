@@ -262,12 +262,16 @@ class ContextWindow:
         Note: Tool messages are filtered out - they require paired tool_use/tool_result
         which can't be guaranteed from history. Only user/assistant messages loaded.
         """
+        loaded_count = 0
+        skipped_tool = 0
+        skipped_empty = 0
         for msg in messages:
             role = msg.get("role", "user")
             
             # Skip tool messages - they can't be properly paired from history
             # Anthropic requires tool_result to immediately follow tool_use
             if role == "tool":
+                skipped_tool += 1
                 continue
             
             content = msg.get("content", "")
@@ -296,6 +300,7 @@ class ContextWindow:
             
             # Skip assistant messages that were just tool calls (no text content)
             if role == "assistant" and not content:
+                skipped_empty += 1
                 continue
             
             # Parse created_at from database
@@ -311,6 +316,9 @@ class ContextWindow:
                 content=content,
                 created_at=created_at,
             ))
+            loaded_count += 1
+        
+        logger.info(f"Loaded {loaded_count} messages (skipped: {skipped_tool} tool, {skipped_empty} empty)")
         # Compress if needed after loading
         self._compress_if_needed()
     
