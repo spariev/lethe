@@ -464,6 +464,10 @@ LLM_MODEL_AUX=$SELECTED_MODEL_AUX
 LLM_API_BASE=$SELECTED_API_BASE
 $api_key_line
 
+# Paths (workspace at ~/lethe for both native and container modes)
+WORKSPACE_DIR=$WORKSPACE_DIR
+MEMORY_DIR=$WORKSPACE_DIR/data/memory
+
 # Optional: Heartbeat interval (seconds, default 900 = 15 min)
 # HEARTBEAT_INTERVAL=900
 # HEARTBEAT_ENABLED=true
