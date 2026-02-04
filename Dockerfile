@@ -15,13 +15,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install agent-browser for browser automation (with Playwright deps)
 RUN npm install -g agent-browser && agent-browser install --with-deps
 
-# Install uv (move to /usr/local/bin so non-root user can access)
+# Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     mv /root/.local/bin/uv /usr/local/bin/ && \
     mv /root/.local/bin/uvx /usr/local/bin/ 2>/dev/null || true
 ENV PATH="/usr/local/bin:$PATH"
 
-# Create workspace directory (this will be mounted from host)
+# Create workspace directory
 RUN mkdir -p /workspace /app
 
 WORKDIR /app
@@ -38,14 +38,14 @@ RUN uv sync --frozen --index-strategy unsafe-best-match
 # Create non-root user with sudo access
 RUN useradd -m -s /bin/bash lethe && \
     echo "lethe ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
-    chown -R lethe:lethe /app /workspace
+    chown -R lethe:lethe /app && \
+    chmod 777 /workspace
 
 USER lethe
 
-# Environment (must match pydantic-settings field names)
+# Environment
 ENV WORKSPACE_DIR=/workspace
 ENV MEMORY_DIR=/workspace/data/memory
 ENV LETHE_CONFIG_DIR=/app/config
 
-# Run
 CMD ["uv", "run", "lethe"]

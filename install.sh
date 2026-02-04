@@ -683,26 +683,14 @@ EOF
     $CONTAINER_CMD rm lethe 2>/dev/null || true
     
     # Run container
-    # Run as 'lethe' user (UID 1000) which has sudo access inside container
-    # Container is still sandboxed - only /workspace is mounted
-    if [[ "$CONTAINER_CMD" == "podman" ]]; then
-        $CONTAINER_CMD run -d \
-            --name lethe \
-            --restart unless-stopped \
-            --env-file "$CONFIG_DIR/container.env" \
-            -v "$WORKSPACE_DIR:/workspace:Z" \
-            lethe:latest
-    else
-        $CONTAINER_CMD run -d \
-            --name lethe \
-            --restart unless-stopped \
-            --env-file "$CONFIG_DIR/container.env" \
-            -v "$WORKSPACE_DIR:/workspace" \
-            lethe:latest
-    fi
-    
-    # Fix workspace permissions for container user (UID 1000)
-    $CONTAINER_CMD exec lethe sudo chown -R lethe:lethe /workspace 2>/dev/null || true
+    # Run container as 'lethe' user (has sudo inside container)
+    # /workspace is mounted from host with open permissions
+    $CONTAINER_CMD run -d \
+        --name lethe \
+        --restart unless-stopped \
+        --env-file "$CONFIG_DIR/container.env" \
+        -v "$WORKSPACE_DIR:/workspace" \
+        lethe:latest
     
     success "Container started"
     info "Workspace: $WORKSPACE_DIR"
