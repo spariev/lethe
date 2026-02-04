@@ -712,9 +712,9 @@ setup_container() {
     mkdir -p "$WORKSPACE_DIR"
     chmod 777 "$WORKSPACE_DIR"
     
-    # Build image
+    # Build image (--load required for Docker buildx to load into local daemon)
     cd "$INSTALL_DIR"
-    $CONTAINER_CMD build -t lethe:latest .
+    $CONTAINER_CMD build --load -t lethe:latest .
     
     # Create env file for container
     local key_name="${PROVIDER_KEYS[$SELECTED_PROVIDER]}"

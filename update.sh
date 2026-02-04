@@ -188,7 +188,7 @@ update_container() {
     
     info "Rebuilding container image..."
     cd "$tmp_dir"
-    $container_cmd build -t lethe:latest --label "version=$latest_version" .
+    $container_cmd build --load -t lethe:latest --label "version=$latest_version" .
     
     info "Starting container..."
     if [ ! -f "$config_file" ]; then
