@@ -59,6 +59,14 @@ cp .env.example .env
 uv run lethe
 ```
 
+### 3. Update
+
+```bash
+curl -fsSL https://lethe.gg/update | bash
+```
+
+This automatically detects your install mode (container or native) and updates accordingly.
+
 ### LLM Providers
 
 | Provider | Env Variable | Default Model |
