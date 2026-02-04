@@ -3,12 +3,14 @@
 
 FROM python:3.12-slim
 
-# Install system dependencies
+# Install system dependencies + gosu for user switching
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     nodejs \
     npm \
+    sudo \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Install agent-browser for browser automation (with Playwright deps)
@@ -34,9 +36,15 @@ COPY config/ ./config/
 ENV UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
 RUN uv sync --frozen --index-strategy unsafe-best-match
 
+# Copy entrypoint
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Environment
 ENV WORKSPACE_DIR=/workspace
 ENV MEMORY_DIR=/workspace/data/memory
 ENV LETHE_CONFIG_DIR=/app/config
 
+# Entrypoint handles user creation based on HOST_UID
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uv", "run", "lethe"]

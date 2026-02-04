@@ -683,14 +683,26 @@ EOF
     $CONTAINER_CMD rm lethe 2>/dev/null || true
     
     # Run container
-    # Run container as 'lethe' user (has sudo inside container)
-    # /workspace is mounted from host with open permissions
-    $CONTAINER_CMD run -d \
-        --name lethe \
-        --restart unless-stopped \
-        --env-file "$CONFIG_DIR/container.env" \
-        -v "$WORKSPACE_DIR:/workspace" \
-        lethe:latest
+    # Podman: --userns=keep-id automatically maps host user (files owned correctly)
+    # Docker: pass HOST_UID/GID, entrypoint creates matching user with sudo
+    if [[ "$CONTAINER_CMD" == "podman" ]]; then
+        $CONTAINER_CMD run -d \
+            --name lethe \
+            --restart unless-stopped \
+            --userns=keep-id \
+            --env-file "$CONFIG_DIR/container.env" \
+            -v "$WORKSPACE_DIR:/workspace:Z" \
+            lethe:latest
+    else
+        $CONTAINER_CMD run -d \
+            --name lethe \
+            --restart unless-stopped \
+            -e HOST_UID=$(id -u) \
+            -e HOST_GID=$(id -g) \
+            --env-file "$CONFIG_DIR/container.env" \
+            -v "$WORKSPACE_DIR:/workspace" \
+            lethe:latest
+    fi
     
     success "Container started"
     info "Workspace: $WORKSPACE_DIR"

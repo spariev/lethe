@@ -195,12 +195,24 @@ update_container() {
         error "Config file not found: $config_file"
     fi
     
-    $container_cmd run -d \
-        --name lethe \
-        --restart unless-stopped \
-        --env-file "$config_file" \
-        -v "$workspace_dir:/workspace" \
-        lethe:latest
+    if [[ "$container_cmd" == "podman" ]]; then
+        $container_cmd run -d \
+            --name lethe \
+            --restart unless-stopped \
+            --userns=keep-id \
+            --env-file "$config_file" \
+            -v "$workspace_dir:/workspace:Z" \
+            lethe:latest
+    else
+        $container_cmd run -d \
+            --name lethe \
+            --restart unless-stopped \
+            -e HOST_UID=$(id -u) \
+            -e HOST_GID=$(id -g) \
+            --env-file "$config_file" \
+            -v "$workspace_dir:/workspace" \
+            lethe:latest
+    fi
     
     success "Container updated and restarted!"
     echo ""
