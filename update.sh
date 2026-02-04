@@ -22,8 +22,53 @@ NC='\033[0m'
 # Config
 REPO_OWNER="atemerev"
 REPO_NAME="lethe"
-INSTALL_DIR="${LETHE_INSTALL_DIR:-$HOME/.lethe}"
 CONFIG_DIR="${LETHE_CONFIG_DIR:-$HOME/.config/lethe}"
+
+detect_install_dir() {
+    # 1. Check environment variable
+    if [ -n "${LETHE_INSTALL_DIR:-}" ] && [ -d "$LETHE_INSTALL_DIR/.git" ]; then
+        echo "$LETHE_INSTALL_DIR"
+        return
+    fi
+    
+    # 2. Check if running from within install dir
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "$script_dir/pyproject.toml" ] && grep -q "lethe" "$script_dir/pyproject.toml" 2>/dev/null; then
+        echo "$script_dir"
+        return
+    fi
+    
+    # 3. Check systemd service for WorkingDirectory
+    if [ -f "$HOME/.config/systemd/user/lethe.service" ]; then
+        local wd=$(grep "WorkingDirectory=" "$HOME/.config/systemd/user/lethe.service" 2>/dev/null | cut -d= -f2)
+        if [ -n "$wd" ] && [ -d "$wd/.git" ]; then
+            echo "$wd"
+            return
+        fi
+    fi
+    
+    # 4. Check launchd plist for WorkingDirectory
+    if [ -f "$HOME/Library/LaunchAgents/com.lethe.agent.plist" ]; then
+        local wd=$(grep -A1 "WorkingDirectory" "$HOME/Library/LaunchAgents/com.lethe.agent.plist" 2>/dev/null | tail -1 | sed 's/.*<string>\(.*\)<\/string>.*/\1/')
+        if [ -n "$wd" ] && [ -d "$wd/.git" ]; then
+            echo "$wd"
+            return
+        fi
+    fi
+    
+    # 5. Check common locations
+    for dir in "$HOME/.lethe" "$HOME/lethe" "$HOME/devel/lethe" "/opt/lethe"; do
+        if [ -d "$dir/.git" ] && [ -f "$dir/pyproject.toml" ]; then
+            echo "$dir"
+            return
+        fi
+    done
+    
+    # Fallback
+    echo "$HOME/.lethe"
+}
+
+INSTALL_DIR=$(detect_install_dir)
 
 info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 success() { echo -e "${GREEN}[OK]${NC} $1"; }
