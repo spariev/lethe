@@ -647,6 +647,26 @@ detect_container_runtime() {
     command -v podman &>/dev/null && has_podman=true
     command -v docker &>/dev/null && has_docker=true
     
+    # Check if Docker daemon is actually reachable
+    if $has_docker; then
+        if ! docker info &>/dev/null; then
+            warn "Docker command found but daemon not reachable"
+            if [[ -n "$DOCKER_HOST" ]]; then
+                warn "DOCKER_HOST is set to: $DOCKER_HOST"
+                warn "This may be pointing to a non-running Docker Desktop"
+                echo ""
+                echo "  Try one of:"
+                echo "    1. Start Docker Desktop"
+                echo "    2. Run: unset DOCKER_HOST"
+                echo "    3. Run: export DOCKER_HOST=unix:///var/run/docker.sock"
+                echo ""
+            else
+                warn "Try: sudo systemctl start docker"
+            fi
+            has_docker=false
+        fi
+    fi
+    
     if $has_podman && $has_docker; then
         # Both available - offer selection
         echo ""

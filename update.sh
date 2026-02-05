@@ -174,6 +174,24 @@ update_container() {
     local config_file="$CONFIG_DIR/container.env"
     local workspace_dir="${LETHE_WORKSPACE_DIR:-$HOME/lethe}"
     
+    # Check if container runtime is reachable
+    if ! $container_cmd info &>/dev/null; then
+        error "$container_cmd daemon not reachable"
+        if [[ "$container_cmd" == "docker" ]] && [[ -n "$DOCKER_HOST" ]]; then
+            echo ""
+            echo "  DOCKER_HOST is set to: $DOCKER_HOST"
+            echo "  This may be pointing to a non-running Docker Desktop"
+            echo ""
+            echo "  Try one of:"
+            echo "    1. Start Docker Desktop"
+            echo "    2. Run: unset DOCKER_HOST"
+            echo "    3. Run: export DOCKER_HOST=unix:///var/run/docker.sock"
+            echo "    4. Run: sudo systemctl start docker"
+            echo ""
+        fi
+        exit 1
+    fi
+    
     # Clone to temp directory
     local tmp_dir=$(mktemp -d)
     trap "rm -rf $tmp_dir" EXIT
