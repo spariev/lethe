@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 # Suppress litellm's verbose logging
 litellm.suppress_debug_info = True
+# Allow litellm to modify params for provider compatibility (e.g., Anthropic tool handling)
+litellm.modify_params = True
 
 # Debug logging for LLM interactions
 LLM_DEBUG = os.environ.get("LLM_DEBUG", "false").lower() == "true"
