@@ -247,11 +247,15 @@ class ConsoleUI:
         # Update stats
         self.stats_label.text = f"Messages: {len(state.messages)} | History: {state.total_messages} | Archival: {state.archival_count}"
         
-        # Update context info
+        # Update context info and rebuild context view
         if state.last_context_time:
             time_str = state.last_context_time.strftime("%H:%M:%S")
             self.context_info.text = f"{state.last_context_tokens:,} tokens @ {time_str}"
             self.context_info.update()
+            
+            # Rebuild context view if we have new context
+            if state.last_context:
+                self._rebuild_context()
     
     def run(self):
         """Run the console server."""

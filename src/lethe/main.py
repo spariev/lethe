@@ -94,6 +94,11 @@ async def run():
         if agent.llm.context.summary:
             lethe_console.update_summary(agent.llm.context.summary)
         
+        # Capture initial context (what would be sent to LLM)
+        initial_context = agent.llm.context.build_messages()
+        token_estimate = agent.llm.context.count_tokens(str(initial_context))
+        lethe_console.update_context(initial_context, token_estimate)
+        
         # Hook into agent for state updates
         agent.set_console_hooks(
             on_context_build=lambda ctx, tokens: lethe_console.update_context(ctx, tokens),
