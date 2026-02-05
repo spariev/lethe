@@ -617,6 +617,25 @@ class AsyncLLMClient:
         """Update the memory context."""
         self.context.memory_context = memory_context
     
+    def set_console_hooks(
+        self,
+        on_context_build: Optional[Callable] = None,
+        on_status_change: Optional[Callable] = None,
+    ):
+        """Set callbacks for console state updates."""
+        self._on_context_build = on_context_build
+        self._on_status_change = on_status_change
+    
+    def _notify_status(self, status: str, tool: Optional[str] = None):
+        """Notify console of status change."""
+        if hasattr(self, "_on_status_change") and self._on_status_change:
+            self._on_status_change(status, tool)
+    
+    def _notify_context(self, context: List[Dict], tokens: int):
+        """Notify console of context build."""
+        if hasattr(self, "_on_context_build") and self._on_context_build:
+            self._on_context_build(context, tokens)
+    
     def load_messages(self, messages: List[dict]):
         """Load existing messages from history into context.
         
@@ -699,6 +718,7 @@ class AsyncLLMClient:
                         continue
                     
                     logger.info(f"Executing tool: {tool_name}({list(tool_args.keys())})")
+                    self._notify_status("tool_call", tool_name)
                     
                     # Execute tool (handle both sync and async)
                     handler = self.get_tool(tool_name)
@@ -866,6 +886,11 @@ class AsyncLLMClient:
         
         if self.tools:
             kwargs["tools"] = self.tools
+        
+        # Notify console of context build
+        token_count = self.context.count_tokens("".join(str(m) for m in messages))
+        self._notify_context(messages, token_count)
+        self._notify_status("thinking")
         
         logger.debug(f"API call: {len(messages)} messages, {len(self.tools)} tools")
         

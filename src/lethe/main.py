@@ -18,6 +18,7 @@ from lethe.config import get_settings
 from lethe.conversation import ConversationManager
 from lethe.telegram import TelegramBot
 from lethe.heartbeat import Heartbeat
+from lethe import console as lethe_console
 
 console = Console()
 
@@ -65,6 +66,26 @@ async def run():
     
     stats = agent.get_stats()
     console.print(f"[green]Agent ready[/green] - {stats['memory_blocks']} blocks, {stats['archival_memories']} memories")
+
+    # Initialize console (mind state visualization) if enabled
+    console_enabled = os.environ.get("LETHE_CONSOLE", "false").lower() == "true"
+    console_port = int(os.environ.get("LETHE_CONSOLE_PORT", 8080))
+    
+    if console_enabled:
+        from lethe.console.ui import run_console
+        await run_console(port=console_port)
+        console.print(f"[cyan]Console[/cyan] running at http://localhost:{console_port}")
+        
+        # Set up state updates
+        lethe_console.update_stats(stats['total_messages'], stats['archival_memories'])
+        lethe_console.update_identity(agent.memory.blocks.get("identity", {}).get("value", ""))
+        
+        # Hook into agent for state updates
+        agent.set_console_hooks(
+            on_context_build=lambda ctx, tokens: lethe_console.update_context(ctx, tokens),
+            on_status_change=lambda status, tool: lethe_console.update_status(status, tool),
+            on_memory_change=lambda blocks: lethe_console.update_memory_blocks(blocks),
+        )
 
     # Initialize conversation manager
     conversation_manager = ConversationManager(debounce_seconds=settings.debounce_seconds)

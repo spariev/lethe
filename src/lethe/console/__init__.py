@@ -1,0 +1,94 @@
+"""Lethe Console - Mind State Visualization.
+
+A web-based dashboard showing the agent's current context assembly:
+- Chat messages
+- Memory blocks
+- System prompt
+- What's actually sent to the LLM
+"""
+
+import asyncio
+import logging
+from typing import Optional, Dict, List, Any
+from dataclasses import dataclass, field
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ConsoleState:
+    """Shared state for the console UI."""
+    
+    # Memory blocks (label -> block data)
+    memory_blocks: Dict[str, Dict] = field(default_factory=dict)
+    
+    # Identity/system prompt
+    identity: str = ""
+    
+    # Conversation summary
+    summary: str = ""
+    
+    # Recent messages (role, content, timestamp)
+    messages: List[Dict] = field(default_factory=list)
+    
+    # Last built context (what was sent to LLM)
+    last_context: List[Dict] = field(default_factory=list)
+    last_context_tokens: int = 0
+    last_context_time: Optional[datetime] = None
+    
+    # Agent status
+    status: str = "idle"  # idle, thinking, tool_call
+    current_tool: Optional[str] = None
+    
+    # Stats
+    total_messages: int = 0
+    archival_count: int = 0
+
+
+# Global state instance
+_state = ConsoleState()
+
+
+def get_state() -> ConsoleState:
+    """Get the global console state."""
+    return _state
+
+
+def update_memory_blocks(blocks: List[Dict]):
+    """Update memory blocks in console state."""
+    _state.memory_blocks = {b["label"]: b for b in blocks}
+
+
+def update_identity(identity: str):
+    """Update identity/system prompt."""
+    _state.identity = identity
+
+
+def update_summary(summary: str):
+    """Update conversation summary."""
+    _state.summary = summary
+
+
+def update_messages(messages: List[Dict]):
+    """Update recent messages."""
+    _state.messages = messages
+
+
+def update_context(context: List[Dict], tokens: int):
+    """Update last built context."""
+    _state.last_context = context
+    _state.last_context_tokens = tokens
+    _state.last_context_time = datetime.now()
+
+
+def update_status(status: str, tool: Optional[str] = None):
+    """Update agent status."""
+    _state.status = status
+    _state.current_tool = tool
+
+
+def update_stats(total_messages: int, archival_count: int):
+    """Update stats."""
+    _state.total_messages = total_messages
+    _state.archival_count = archival_count

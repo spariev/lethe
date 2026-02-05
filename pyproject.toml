@@ -16,6 +16,7 @@ dependencies = [
     "sentence-transformers>=5.2.2",
     "python-dotenv>=1.2.1",
     "litellm>=1.81.6",
+    "nicegui>=3.7.1",
 ]
 # Note: Browser automation requires agent-browser CLI: npm install -g agent-browser
 

@@ -464,6 +464,9 @@ Summary:"""
         # Store assistant response in history
         self.memory.messages.add("assistant", response)
         
+        # Notify console of idle status
+        self.llm._notify_status("idle")
+        
         return response
     
     async def heartbeat(self, message: str) -> str:
@@ -491,6 +494,7 @@ Summary:"""
             "memory_blocks": len(self.memory.blocks.list_blocks()),
             "archival_memories": self.memory.archival.count(),
             "message_history": self.memory.messages.count(),
+            "total_messages": self.memory.messages.count(),  # Alias for console
             "tools": len(self.llm._tools),
             "llm": self.llm.get_context_stats(),
         }
@@ -498,3 +502,24 @@ Summary:"""
     def refresh_memory_context(self):
         """Refresh LLM memory context from current blocks."""
         self.llm.update_memory_context(self.memory.get_context_for_prompt())
+    
+    def set_console_hooks(
+        self,
+        on_context_build: Optional[Callable] = None,
+        on_status_change: Optional[Callable] = None,
+        on_memory_change: Optional[Callable] = None,
+    ):
+        """Set callbacks for console state updates.
+        
+        Args:
+            on_context_build: Called with (context, tokens) when context is built
+            on_status_change: Called with (status, tool) when status changes
+            on_memory_change: Called with (blocks) when memory changes
+        """
+        self._console_hooks = {
+            "on_context_build": on_context_build,
+            "on_status_change": on_status_change,
+            "on_memory_change": on_memory_change,
+        }
+        # Pass hooks to LLM client
+        self.llm.set_console_hooks(on_context_build, on_status_change)
