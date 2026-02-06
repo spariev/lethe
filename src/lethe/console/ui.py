@@ -15,12 +15,12 @@ logger = logging.getLogger(__name__)
 # Refresh interval in seconds
 REFRESH_INTERVAL = 2.0
 
-# Role colors and styling
+# Role colors and styling (light theme)
 ROLE_STYLES = {
-    "user": {"bg": "bg-blue-900", "border": "border-blue-500", "icon": "person", "align": "ml-8"},
-    "assistant": {"bg": "bg-green-900", "border": "border-green-500", "icon": "smart_toy", "align": "mr-8"},
-    "tool": {"bg": "bg-yellow-900", "border": "border-yellow-500", "icon": "build", "align": "mx-4"},
-    "system": {"bg": "bg-gray-800", "border": "border-gray-500", "icon": "settings", "align": "mx-4"},
+    "user": {"bg": "bg-blue-50", "border": "border-blue-400", "icon": "person"},
+    "assistant": {"bg": "bg-emerald-50", "border": "border-emerald-400", "icon": "smart_toy"},
+    "tool": {"bg": "bg-amber-50", "border": "border-amber-400", "icon": "build"},
+    "system": {"bg": "bg-slate-100", "border": "border-slate-400", "icon": "settings"},
 }
 
 
@@ -38,8 +38,8 @@ class ConsoleUI:
         async def main_page():
             state = get_state()
             
-            # Dark theme
-            ui.dark_mode().enable()
+            # Light theme
+            ui.dark_mode().disable()
             
             # Custom CSS
             ui.add_head_html('''
@@ -62,27 +62,27 @@ class ConsoleUI:
             ''')
             
             # Header
-            with ui.header().classes("bg-primary"):
+            with ui.header().classes("bg-indigo-600"):
                 ui.label("🧠 Lethe Console").classes("text-h5 text-white")
                 ui.space()
-                self.status_chip = ui.chip("idle", icon="circle", color="green").classes("text-white")
+                self.status_chip = ui.chip("idle", icon="circle", color="green")
                 self.stats_label = ui.label("").classes("text-white ml-4")
             
             # Main layout - 3 columns (flex, no wrap)
-            with ui.element("div").classes("flex flex-nowrap w-full h-screen"):
+            with ui.element("div").classes("flex flex-nowrap w-full h-screen bg-white"):
                 # Messages column - 30%
-                with ui.element("div").classes("w-[30%] min-w-0 h-full border-r border-gray-700 overflow-y-auto flex-shrink-0"):
-                    ui.label("💬 Messages").classes("text-h6 p-2 sticky top-0 bg-gray-900 z-10")
+                with ui.element("div").classes("w-[30%] min-w-0 h-full border-r border-gray-200 overflow-y-auto flex-shrink-0"):
+                    ui.label("💬 Messages").classes("text-h6 p-2 sticky top-0 bg-blue-50 z-10 border-b border-gray-200")
                     self.messages_container = ui.column().classes("w-full p-2 gap-1")
                 
                 # Memory column - 20%
-                with ui.element("div").classes("w-[20%] min-w-0 h-full border-r border-gray-700 overflow-y-auto flex-shrink-0"):
-                    ui.label("🧠 Memory").classes("text-h6 p-2 sticky top-0 bg-gray-900 z-10")
+                with ui.element("div").classes("w-[20%] min-w-0 h-full border-r border-gray-200 overflow-y-auto flex-shrink-0"):
+                    ui.label("🧠 Memory").classes("text-h6 p-2 sticky top-0 bg-purple-50 z-10 border-b border-gray-200")
                     self.blocks_container = ui.column().classes("w-full p-2")
                 
                 # Context column - 50%
                 with ui.element("div").classes("w-[50%] min-w-0 h-full overflow-y-auto flex-shrink-0"):
-                    with ui.row().classes("w-full items-center p-2 sticky top-0 bg-gray-900 z-10"):
+                    with ui.row().classes("w-full items-center p-2 sticky top-0 bg-slate-50 z-10 border-b border-gray-200"):
                         ui.label("📤 Context").classes("text-h6")
                         self.context_info = ui.chip("", icon="token").classes("ml-4")
                     self.context_container = ui.column().classes("w-full p-2 gap-1")
