@@ -35,19 +35,24 @@ def _get_system_info():
         mem = psutil.virtual_memory()
         info["ram_total"] = f"{mem.total / (1024**3):.0f}GB"
         
-        # GPU detection
+        # GPU detection (collapse identical ones)
         gpus = []
         try:
             import subprocess
+            from collections import Counter
             result = subprocess.run(
                 ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
                 capture_output=True, text=True, timeout=3
             )
             if result.returncode == 0:
+                raw = []
                 for line in result.stdout.strip().split("\n"):
                     parts = line.split(", ")
                     if len(parts) == 2:
-                        gpus.append(f"{parts[0].strip()} ({int(parts[1].strip())//1024}GB)")
+                        raw.append(f"{parts[0].strip()} ({int(parts[1].strip())//1024}GB)")
+                counts = Counter(raw)
+                for gpu, count in counts.items():
+                    gpus.append(f"{count}x{gpu}" if count > 1 else gpu)
         except Exception:
             pass
         info["gpus"] = gpus
