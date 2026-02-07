@@ -274,15 +274,33 @@ class ContextWindow:
         Args:
             messages: List of dicts with 'role', 'content', 'metadata', and optionally 'created_at' keys
         
-        Tool messages are loaded with their metadata to maintain proper pairing.
+        Tool messages from history are skipped — they can only be properly paired
+        within the same session. Cross-model tool ID formats are incompatible.
         """
         loaded_count = 0
         skipped_empty = 0
+        skipped_tool = 0
         
         for msg in messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")
             metadata = msg.get("metadata", {})
+            
+            # Skip tool messages from history — tool_use/tool_result pairing
+            # only works within the same session. Different models use different
+            # ID formats (Kimi: "functions.name:N", Anthropic: "toolu_xxx")
+            if role == "tool":
+                skipped_tool += 1
+                continue
+            
+            # Skip assistant messages that are only tool_calls (no text)
+            if role == "assistant" and metadata.get("tool_calls") and not content:
+                skipped_tool += 1
+                continue
+            
+            # Strip tool_calls from assistant messages loaded from history
+            if role == "assistant" and metadata.get("tool_calls"):
+                metadata = {k: v for k, v in metadata.items() if k != "tool_calls"}
             
             # Handle multimodal content - extract text, skip base64
             if isinstance(content, str) and content.startswith("["):
@@ -330,7 +348,7 @@ class ContextWindow:
             ))
             loaded_count += 1
         
-        logger.info(f"Loaded {loaded_count} messages (skipped: {skipped_empty} empty)")
+        logger.info(f"Loaded {loaded_count} messages (skipped: {skipped_tool} tool, {skipped_empty} empty)")
         # Compress if needed after loading
         self._compress_if_needed()
     
