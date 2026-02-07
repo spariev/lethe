@@ -73,7 +73,8 @@ class ConsoleUI:
                     self.stats_label = ui.label("").classes("text-sm text-slate-600")
             
             # Main layout - 3 columns (flex, no wrap)
-            with ui.element("div").classes("flex flex-nowrap w-full h-screen bg-white"):
+            # Use calc to subtract header height
+            with ui.element("div").classes("flex flex-nowrap w-full bg-white").style("height: calc(100vh - 40px)"):
                 # Messages column - 30%
                 with ui.element("div").classes("w-[30%] min-w-0 h-full border-r border-gray-200 flex-shrink-0 flex flex-col"):
                     ui.label("💬 Messages").classes("text-subtitle1 font-medium px-3 py-2 bg-slate-200 border-b border-gray-300 flex-shrink-0")
