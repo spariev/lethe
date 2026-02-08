@@ -439,32 +439,69 @@ class ContextWindow:
         }
     
     def _clean_orphaned_tool_messages(self):
-        """Remove tool messages that don't have matching tool_use in previous assistant message.
+        """Ensure tool_use/tool_result pairing is correct for Anthropic.
         
-        Anthropic requires tool_result to immediately follow tool_use.
-        This prevents errors when context gets corrupted mid-session.
+        - Remove tool_result without matching tool_use
+        - Remove assistant tool_calls if no tool_results follow
         """
         if not self.messages:
             return
         
-        clean_messages = []
-        pending_tool_ids = set()  # tool IDs we expect results for
+        # First pass: collect valid tool_call_id → result pairs
+        # Walk forward to check which tool_uses have results
+        tool_use_to_results = {}  # assistant_idx → set of tool_call_ids that got results
+        current_assistant_idx = None
+        current_tool_ids = set()
         
-        for msg in self.messages:
+        for i, msg in enumerate(self.messages):
             if msg.role == "assistant" and msg.tool_calls:
-                # Track expected tool IDs
-                pending_tool_ids = {tc["id"] for tc in msg.tool_calls}
-                clean_messages.append(msg)
-            elif msg.role == "tool" and msg.tool_call_id:
-                # Only keep tool results that have matching pending tool_use
-                if msg.tool_call_id in pending_tool_ids:
-                    clean_messages.append(msg)
-                    pending_tool_ids.discard(msg.tool_call_id)
+                # Save previous unresolved assistant
+                if current_assistant_idx is not None:
+                    tool_use_to_results[current_assistant_idx] = current_tool_ids.copy()
+                current_assistant_idx = i
+                current_tool_ids = set()
+            elif msg.role == "tool" and msg.tool_call_id and current_assistant_idx is not None:
+                current_tool_ids.add(msg.tool_call_id)
+            elif msg.role in ("user", "assistant") and not (msg.role == "assistant" and msg.tool_calls):
+                if current_assistant_idx is not None:
+                    tool_use_to_results[current_assistant_idx] = current_tool_ids.copy()
+                current_assistant_idx = None
+                current_tool_ids = set()
+        # Don't forget the last group
+        if current_assistant_idx is not None:
+            tool_use_to_results[current_assistant_idx] = current_tool_ids.copy()
+        
+        # Second pass: build clean message list
+        clean_messages = []
+        expected_tool_ids = set()
+        
+        for i, msg in enumerate(self.messages):
+            if msg.role == "assistant" and msg.tool_calls:
+                # Check if this assistant's tool_calls have results
+                result_ids = tool_use_to_results.get(i, set())
+                expected_ids = {tc["id"] for tc in msg.tool_calls}
+                
+                if not result_ids:
+                    # No results at all — strip tool_calls, keep text if any
+                    if msg.content:
+                        clean_messages.append(Message(
+                            role="assistant", content=msg.content,
+                            created_at=msg.created_at,
+                        ))
+                    else:
+                        logger.warning(f"Removing assistant tool_calls with no results: {expected_ids}")
+                    expected_tool_ids = set()
                 else:
-                    logger.warning(f"Removing orphaned tool message: {msg.tool_call_id}")
+                    clean_messages.append(msg)
+                    expected_tool_ids = expected_ids
+            elif msg.role == "tool" and msg.tool_call_id:
+                if msg.tool_call_id in expected_tool_ids:
+                    clean_messages.append(msg)
+                    expected_tool_ids.discard(msg.tool_call_id)
+                else:
+                    logger.warning(f"Removing orphaned tool result: {msg.tool_call_id}")
             else:
-                # Regular user/assistant message - reset pending
-                pending_tool_ids.clear()
+                expected_tool_ids = set()
                 clean_messages.append(msg)
         
         if len(clean_messages) != len(self.messages):
