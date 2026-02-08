@@ -1189,6 +1189,9 @@ class AsyncLLMClient:
         
         if task_tools:
             kwargs["tools"] = task_tools
+            logger.info(f"Heartbeat: {len(task_tools)} tools available: {[t['function']['name'] for t in task_tools]}")
+        else:
+            logger.warning("Heartbeat: NO tools available!")
         
         # Simple loop for tool calls (max 5 iterations — read + write + reflect)
         for _ in range(5):
