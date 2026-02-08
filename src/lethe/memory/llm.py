@@ -603,13 +603,15 @@ class ContextWindow:
                             break
                 content = f"[Previously viewed image: {path}]"
             
-            # Truncate old tool results to metadata only
-            # Keep full content only for the last tool_call group
+            # Skim old tool results — keep full content only for the last tool_call group
             if msg.role == "tool" and msg.tool_call_id and msg.tool_call_id not in last_tool_ids:
                 content_str = content if isinstance(content, str) else str(content)
-                if len(content_str) > 200:
-                    # Keep first 150 chars as preview
-                    content = f"[Tool result: {len(content_str)} chars]\n{content_str[:150]}..."
+                lines = content_str.split("\n")
+                if len(lines) > 5:
+                    tool_name = msg.name or "tool"
+                    header = f"[{tool_name} output: {len(lines)} lines, {len(content_str)} chars — skipped]"
+                    preview = "\n".join(lines[:5])
+                    content = f"{header}\n{preview}\n[... {len(lines) - 5} more lines skipped]"
             
             if msg.role == "user" and not msg.tool_calls and isinstance(content, str):
                 timestamp = msg.format_timestamp()
