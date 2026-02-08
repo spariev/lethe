@@ -823,6 +823,11 @@ class AsyncLLMClient:
             # Handle tool calls
             tool_calls = assistant_msg.get("tool_calls")
             
+            if tool_calls:
+                logger.info(f"Tool calls received: {len(tool_calls)} calls")
+                for tc in tool_calls:
+                    logger.info(f"  Tool: {tc.get('function', {}).get('name', '?')} id={tc.get('id', '?')}")
+            
             # Callback with intermediate message (only when there are tool calls - i.e. more work to do)
             # Don't callback with final response - that's returned and handled by caller
             if content and on_message and tool_calls:
