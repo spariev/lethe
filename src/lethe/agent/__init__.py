@@ -48,6 +48,11 @@ class Agent:
         # Load system prompt from config
         system_prompt = self._build_system_prompt()
         
+        # Load model-specific communication rules into system prompt
+        comm_rules = self._load_communication_rules(llm_config.model)
+        if comm_rules:
+            system_prompt += "\n\n" + comm_rules
+        
         # Get memory context
         memory_context = self.memory.get_context_for_prompt()
         
@@ -164,6 +169,33 @@ Summary:"""
         except Exception as e:
             logger.warning(f"Failed to summarize history: {e}")
             return ""
+    
+    def _load_communication_rules(self, model: str) -> str:
+        """Load model-specific communication rules from skills directory."""
+        from pathlib import Path
+        
+        workspace = self.settings.workspace_dir
+        skills_dir = workspace / "skills"
+        
+        # Determine which rules to load based on model name
+        model_lower = model.lower()
+        if "kimi" in model_lower:
+            rules_file = skills_dir / "communication-kimi.md"
+        elif "claude" in model_lower or "anthropic" in model_lower:
+            rules_file = skills_dir / "communication-anthropic.md"
+        else:
+            # Try generic, then kimi as fallback (most restrictive)
+            rules_file = skills_dir / "communication.md"
+            if not rules_file.exists():
+                rules_file = skills_dir / "communication-kimi.md"
+        
+        if rules_file.exists():
+            content = rules_file.read_text().strip()
+            logger.info(f"Loaded communication rules from {rules_file.name}")
+            return content
+        
+        logger.debug("No communication rules found in skills/")
+        return ""
     
     def _build_system_prompt(self) -> str:
         """Build system prompt from identity memory block.
