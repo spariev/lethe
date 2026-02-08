@@ -194,16 +194,9 @@ class Message:
         return re.sub(r'[^a-zA-Z0-9-]', '-', tid)
     
     def __post_init__(self):
-        """Set created_at if not provided. Sanitize tool IDs for Anthropic."""
+        """Set created_at if not provided."""
         if self.created_at is None:
             self.created_at = datetime.now(timezone.utc)
-        # Anthropic requires tool_call IDs to match ^[a-zA-Z0-9-]+$
-        if self.tool_call_id:
-            self.tool_call_id = self._sanitize_tool_id(self.tool_call_id)
-        if self.tool_calls:
-            for tc in self.tool_calls:
-                if "id" in tc:
-                    tc["id"] = self._sanitize_tool_id(tc["id"])
     
     def get_text_content(self) -> str:
         """Get text content for token counting and logging."""
@@ -669,6 +662,18 @@ class ContextWindow:
                     merged[-1]["content"] = cur_content
             else:
                 merged.append(m)
+        
+        # Sanitize tool IDs for Anthropic (must match ^[a-zA-Z0-9-]+$)
+        # Kimi needs exact format: functions.func_name:idx — DO NOT sanitize
+        if "claude" in self.config.model.lower() or "anthropic" in self.config.model.lower():
+            import re
+            for m in merged:
+                if m.get("tool_call_id"):
+                    m["tool_call_id"] = re.sub(r'[^a-zA-Z0-9-]', '-', m["tool_call_id"])
+                if m.get("tool_calls"):
+                    for tc in m["tool_calls"]:
+                        if "id" in tc:
+                            tc["id"] = re.sub(r'[^a-zA-Z0-9-]', '-', tc["id"])
         
         return merged
 
