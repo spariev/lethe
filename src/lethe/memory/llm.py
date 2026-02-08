@@ -930,23 +930,8 @@ class AsyncLLMClient:
                 
                 continue  # Loop to get next response
             
-            # No tool calls - check if model is expressing intent without acting
+            # No tool calls - we have final response
             if content:
-                import re
-                intent_pattern = re.compile(
-                    r"(?:^|\.\s*)(let me|i'?ll|i will|i'?m going to|going to try|let me try)\b",
-                    re.IGNORECASE
-                )
-                if intent_pattern.search(content) and iteration < max_tool_iterations - 1:
-                    # Model said it'll do something but didn't call tools — nudge it
-                    logger.info(f"Intent without action detected, nudging: {content[:60]}...")
-                    self.context.add_message(Message(role="assistant", content=content))
-                    self.context.add_message(Message(
-                        role="user",
-                        content="[Go ahead — use your tools to do it]"
-                    ))
-                    continue
-                
                 self.context.add_message(Message(role="assistant", content=content))
                 return content
             
@@ -1047,8 +1032,21 @@ class AsyncLLMClient:
         
         logger.debug(f"API call: {len(messages)} messages, {len(self.tools)} tools")
         
+        # Dump full context for debugging
+        debug_path = Path("logs/llm")
+        debug_path.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        (debug_path / f"{ts}_request.json").write_text(
+            json.dumps(kwargs, indent=2, default=str)
+        )
+        
         result = await self._call_with_retry(kwargs, "chat")
         self._track_usage(result)
+        
+        (debug_path / f"{ts}_response.json").write_text(
+            json.dumps(result, indent=2, default=str)
+        )
+        
         return result
     
     async def _call_api_no_tools(self) -> Dict:
