@@ -320,6 +320,14 @@ main() {
             
             update_native "$install_dir" "$latest_version"
             
+            # Migrate aux model: gemini-flash → qwen3-coder-next (v0.4.1+)
+            local env_file="$CONFIG_DIR/.env"
+            if [ -f "$env_file" ] && grep -q "gemini.*flash" "$env_file"; then
+                info "Migrating aux model: gemini-flash → qwen3-coder-next"
+                sed -i.bak 's|LLM_MODEL_AUX=.*gemini.*flash.*|LLM_MODEL_AUX=openrouter/qwen/qwen3-coder-next|' "$env_file"
+                success "Aux model updated"
+            fi
+            
             if [[ "$install_mode" == "native-systemd-system" ]]; then
                 info "Restarting systemd system service..."
                 systemctl restart lethe

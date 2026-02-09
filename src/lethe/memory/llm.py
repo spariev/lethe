@@ -58,7 +58,7 @@ PROVIDERS = {
         "env_key": "OPENROUTER_API_KEY",
         "model_prefix": "openrouter/",
         "default_model": "openrouter/moonshotai/kimi-k2.5-0127",
-        "default_model_aux": "openrouter/moonshotai/kimi-k2.5-0127",
+        "default_model_aux": "openrouter/qwen/qwen3-coder-next",
     },
     "anthropic": {
         "env_key": "ANTHROPIC_API_KEY",
