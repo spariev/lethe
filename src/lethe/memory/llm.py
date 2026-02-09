@@ -550,13 +550,17 @@ class ContextWindow:
             system_content = []
             
             # Block 1: System prompt (truly static — only changes on restart)
+            # 1-hour TTL: survives gaps between messages (Telegram bot pattern)
+            # 2x write cost but only once; then $0.10/MTok reads for an hour
             system_content.append({
                 "type": "text",
                 "text": self.system_prompt,
-                "cache_control": {"type": "ephemeral"}
+                "cache_control": {"type": "ephemeral", "ttl": "1h"}
             })
             
             # Block 2: Memory blocks (changes when agent edits memory)
+            # 5-minute TTL: refreshed on each message, re-cached on memory edit
+            # Must come AFTER 1h blocks (Anthropic requirement: longer TTL first)
             if self.memory_context:
                 system_content.append({
                     "type": "text",
@@ -1122,12 +1126,12 @@ class AsyncLLMClient:
         
         if self.tools:
             tools = [t.copy() for t in self.tools]
-            # Anthropic prompt caching: mark last tool for caching
-            # Cache order is tools → system → messages, so caching last tool
-            # ensures all tool definitions are cached
+            # Anthropic prompt caching: mark last tool for 1-hour caching
+            # Cache order is tools → system → messages
+            # Tools never change during a session → 1h TTL (2x write, paid once)
             is_anthropic = "claude" in self.config.model.lower() or "anthropic" in self.config.model.lower()
             if is_anthropic and tools:
-                tools[-1]["cache_control"] = {"type": "ephemeral"}
+                tools[-1]["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
             kwargs["tools"] = tools
         
         # Notify console of context build
