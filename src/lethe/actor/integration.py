@@ -132,11 +132,14 @@ class ActorSystem:
         )
 
     def _collect_available_tools(self):
-        """Collect tools from the agent that subagents can request."""
+        """Collect ALL tools from the agent for subagent use.
+        
+        This runs BEFORE stripping butler tools, so it captures everything.
+        Subagents can request any tool, including memory tools.
+        """
         if hasattr(self.agent, 'llm') and hasattr(self.agent.llm, '_tools'):
             for name, (func, schema) in self.agent.llm._tools.items():
-                if name not in BUTLER_TOOL_NAMES:
-                    self._available_tools[name] = (func, schema)
+                self._available_tools[name] = (func, schema)
 
     def get_available_tool_names(self) -> List[str]:
         """List tool names available for subagents."""
