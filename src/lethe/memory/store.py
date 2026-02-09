@@ -1,6 +1,5 @@
 """Main memory store coordinating all memory subsystems."""
 
-import os
 from pathlib import Path
 from typing import Optional
 import lancedb
@@ -50,8 +49,10 @@ class MemoryStore:
         self._init_blocks_from_templates(blocks_workspace, str(self.config_dir))
         
         # Create skills and projects directories
-        (self.workspace_dir / "skills").mkdir(parents=True, exist_ok=True)
+        skills_dir = self.workspace_dir / "skills"
+        skills_dir.mkdir(parents=True, exist_ok=True)
         (self.workspace_dir / "projects").mkdir(parents=True, exist_ok=True)
+        self._ensure_skills_bootstrap(skills_dir)
         
         # Copy workspace seed files (questions.md, etc.) if not present
         self._init_workspace_seeds(str(self.config_dir))
@@ -75,6 +76,24 @@ class MemoryStore:
                 if not target.exists():
                     target.write_text(seed_file.read_text())
                     logger.info(f"Initialized workspace file from seed: {seed_file.name}")
+
+    def _ensure_skills_bootstrap(self, skills_dir: Path):
+        """Ensure the skills directory always has a known entrypoint file."""
+        readme = skills_dir / "README.md"
+        if readme.exists():
+            return
+
+        readme.write_text(
+            "# Skills\n\n"
+            "This directory stores skill files with extended workflows and references.\n"
+            "This README is intentionally always present so skills are discoverable.\n\n"
+            "Use core tools to work with skills:\n"
+            "- list_directory(\"~/lethe/skills/\")\n"
+            "- read_file(\"~/lethe/skills/README.md\")\n"
+            "- read_file(\"~/lethe/skills/<name>.md\")\n"
+            "- grep_search(\"keyword\", path=\"~/lethe/skills/\")\n"
+        )
+        logger.info("Initialized default skills README")
     
     def _init_blocks_from_templates(self, blocks_workspace: Path, config_dir: str = "config"):
         """Copy block seeds from config/blocks/ to workspace if not present."""

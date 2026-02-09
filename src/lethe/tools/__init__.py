@@ -33,6 +33,13 @@ from lethe.tools.web_search import (
     is_available as web_search_available,
 )
 
+from lethe.tools.browser_agent import (
+    browser_open_async as browser_open,
+    browser_snapshot_async as browser_snapshot,
+    browser_click_async as browser_click,
+    browser_fill_async as browser_fill,
+)
+
 # Internal telegram context (not tools - used by main.py)
 from lethe.tools.telegram_tools import (
     set_telegram_context,
@@ -158,6 +165,12 @@ def get_all_tools() -> list[tuple[Callable, dict]]:
         (edit_file, None),
         (list_directory, None),
         (grep_search, None),
+
+        # Browser
+        (browser_open, "browser_open"),
+        (browser_snapshot, "browser_snapshot"),
+        (browser_click, "browser_click"),
+        (browser_fill, "browser_fill"),
         
         # Web
         (web_search, None),
@@ -189,6 +202,11 @@ def get_tool_by_name(name: str) -> Optional[Callable]:
         "list_directory": list_directory,
         "glob_search": glob_search,
         "grep_search": grep_search,
+        # Browser
+        "browser_open": browser_open,
+        "browser_snapshot": browser_snapshot,
+        "browser_click": browser_click,
+        "browser_fill": browser_fill,
         # Web search
         "web_search": web_search,
         "fetch_webpage": fetch_webpage,
@@ -219,6 +237,11 @@ __all__ = [
     "list_directory",
     "glob_search",
     "grep_search",
+    # Browser
+    "browser_open",
+    "browser_snapshot",
+    "browser_click",
+    "browser_fill",
     # Web search
     "web_search",
     "fetch_webpage",

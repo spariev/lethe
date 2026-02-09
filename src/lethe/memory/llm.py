@@ -1098,21 +1098,31 @@ class AsyncLLMClient:
         self._notify_status("thinking")
         
         logger.debug(f"API call: {len(messages)} messages, {len(self.tools)} tools")
-        
-        # Dump full context for debugging
-        debug_path = Path("logs/llm")
-        debug_path.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        (debug_path / f"{ts}_request.json").write_text(
-            json.dumps(kwargs, indent=2, default=str)
-        )
+
+        debug_ts = None
+        if LLM_DEBUG:
+            # Dump full context only in debug mode.
+            try:
+                debug_path = Path("logs/llm")
+                debug_path.mkdir(parents=True, exist_ok=True)
+                debug_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+                (debug_path / f"{debug_ts}_request.json").write_text(
+                    json.dumps(kwargs, indent=2, default=str)
+                )
+            except Exception as e:
+                logger.warning(f"Failed to write debug request log: {e}")
         
         result = await self._call_with_retry(kwargs, "chat")
         self._track_usage(result)
-        
-        (debug_path / f"{ts}_response.json").write_text(
-            json.dumps(result, indent=2, default=str)
-        )
+
+        if LLM_DEBUG and debug_ts:
+            try:
+                debug_path = Path("logs/llm")
+                (debug_path / f"{debug_ts}_response.json").write_text(
+                    json.dumps(result, indent=2, default=str)
+                )
+            except Exception as e:
+                logger.warning(f"Failed to write debug response log: {e}")
         
         return result
     

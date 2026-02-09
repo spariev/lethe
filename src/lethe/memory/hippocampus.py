@@ -111,7 +111,8 @@ class Hippocampus:
         """
         self.memory = memory_store
         self.summarizer = summarizer
-        self.analyzer = analyzer or summarizer  # Use same function if not specified
+        # Analyzer is optional. If absent, recall falls back to a simple query builder.
+        self.analyzer = analyzer
         self.enabled = enabled
         logger.info(f"Hippocampus initialized (enabled={enabled}, summarizer={summarizer is not None})")
     
@@ -249,6 +250,35 @@ class Hippocampus:
             context_lines.append(f"{role}: {content}")
         
         return "\n".join(context_lines) if context_lines else "(new conversation)"
+
+    def _build_query(
+        self,
+        message: str,
+        recent_messages: Optional[list[dict]] = None,
+    ) -> str:
+        """Build a simple keyword query from message + recent user context.
+
+        Kept for compatibility with older tests/workflows.
+        """
+        parts = [str(message).strip()]
+        if recent_messages:
+            for msg in recent_messages[-5:]:
+                if msg.get("role") != "user":
+                    continue
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    content = " ".join(
+                        part.get("text", "")
+                        for part in content
+                        if isinstance(part, dict) and part.get("type") == "text"
+                    )
+                content = str(content).strip()
+                if content:
+                    parts.append(content)
+
+        # Keep query compact and deterministic.
+        query = " ".join(parts).strip()
+        return query[:200]
     
     def _search_archival(self, query: str, limit: int = 5) -> list[dict]:
         """Search archival memory."""

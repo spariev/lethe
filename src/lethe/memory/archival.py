@@ -84,6 +84,33 @@ class ArchivalMemory:
             Embedding vector
         """
         return self.embedder.compute_query_embeddings(text)[0]
+
+    def _parse_json_field(self, value: str, fallback):
+        """Parse a JSON field safely."""
+        if not value:
+            return fallback
+        try:
+            return json.loads(value)
+        except Exception:
+            return fallback
+
+    def _vector_relevance(self, row: dict) -> float:
+        """Convert vector distance to a higher-is-better relevance score in [0, 1]."""
+        distance = row.get("_distance")
+        if isinstance(distance, (int, float)):
+            return 1.0 / (1.0 + max(0.0, float(distance)))
+        return 0.0
+
+    def _to_memory(self, row: dict, score: float) -> dict:
+        """Convert a raw table row to a memory record."""
+        return {
+            "id": row["id"],
+            "text": row["text"],
+            "metadata": self._parse_json_field(row.get("metadata"), {}),
+            "tags": self._parse_json_field(row.get("tags"), []),
+            "created_at": row["created_at"],
+            "score": score,
+        }
     
     def add(
         self,
@@ -139,6 +166,8 @@ class ArchivalMemory:
             List of matching memories with scores
         """
         table = self._get_table()
+        limit = max(1, limit)
+        search_type = (search_type or "hybrid").lower()
         
         # Generate embedding for vector search
         query_vector = self._embed(query)
@@ -147,46 +176,77 @@ class ArchivalMemory:
             # Pure vector search
             results = (
                 table.search(query_vector)
-                .limit(limit)
+                .limit(limit * 3)
                 .to_list()
             )
+            rows = [r for r in results if r.get("id") != "_init_"]
+            memories = []
+            for row in rows:
+                memory = self._to_memory(row, self._vector_relevance(row))
+                if tags and not any(t in memory["tags"] for t in tags):
+                    continue
+                memories.append(memory)
+                if len(memories) >= limit:
+                    break
+            return memories
         elif search_type == "fts":
             # Pure FTS
             results = (
                 table.search(query, query_type="fts")
-                .limit(limit)
+                .limit(limit * 3)
                 .to_list()
             )
-        else:
-            # Hybrid search (default) - vector + FTS with RRF fusion
-            # LanceDB hybrid search: pass vector, it will also do FTS
-            results = (
-                table.search(query_vector)
-                .limit(limit)
-                .to_list()
-            )
-            # Note: True hybrid requires separate FTS query and RRF fusion
-            # For now, use vector search which captures semantic meaning
-        
-        # Parse results
-        memories = []
-        for r in results:
-            memory = {
-                "id": r["id"],
-                "text": r["text"],
-                "metadata": json.loads(r["metadata"]) if r["metadata"] else {},
-                "tags": json.loads(r["tags"]) if r["tags"] else [],
-                "created_at": r["created_at"],
-                "score": r.get("_distance") or r.get("_score", 0),
-            }
-            
-            # Filter by tags if specified
-            if tags:
-                if not any(t in memory["tags"] for t in tags):
+            rows = [r for r in results if r.get("id") != "_init_"]
+            memories = []
+            for rank, row in enumerate(rows, start=1):
+                # Rank-based relevance for consistent semantics (higher is better).
+                memory = self._to_memory(row, 1.0 / rank)
+                if tags and not any(t in memory["tags"] for t in tags):
                     continue
-            
+                memories.append(memory)
+                if len(memories) >= limit:
+                    break
+            return memories
+
+        # Hybrid search (default) with reciprocal-rank fusion.
+        fetch_limit = max(limit * 3, 20)
+        vector_results = table.search(query_vector).limit(fetch_limit).to_list()
+        try:
+            fts_results = table.search(query, query_type="fts").limit(fetch_limit).to_list()
+        except Exception:
+            fts_results = []
+
+        vector_rows = [r for r in vector_results if r.get("id") != "_init_"]
+        fts_rows = [r for r in fts_results if r.get("id") != "_init_"]
+
+        fused: dict[str, dict] = {}
+        for rank, row in enumerate(vector_rows, start=1):
+            memory_id = row["id"]
+            if memory_id not in fused:
+                fused[memory_id] = {"row": row, "score": 0.0}
+            fused[memory_id]["score"] += 1.0 / rank
+
+        for rank, row in enumerate(fts_rows, start=1):
+            memory_id = row["id"]
+            if memory_id not in fused:
+                fused[memory_id] = {"row": row, "score": 0.0}
+            fused[memory_id]["score"] += 1.0 / rank
+
+        ranked = sorted(fused.values(), key=lambda item: item["score"], reverse=True)
+        if not ranked:
+            return []
+
+        max_score = ranked[0]["score"] or 1.0
+        memories = []
+        for item in ranked:
+            normalized = item["score"] / max_score
+            memory = self._to_memory(item["row"], normalized)
+            if tags and not any(t in memory["tags"] for t in tags):
+                continue
             memories.append(memory)
-        
+            if len(memories) >= limit:
+                break
+
         return memories
     
     def get(self, memory_id: str) -> Optional[dict]:
@@ -264,7 +324,16 @@ class ArchivalMemory:
             Number of memories
         """
         table = self._get_table()
-        return table.count_rows()
+        total = table.count_rows()
+        if total <= 0:
+            return 0
+
+        try:
+            has_init = bool(table.search().where("id = '_init_'").limit(1).to_list())
+        except Exception:
+            has_init = total > 0
+
+        return max(0, total - (1 if has_init else 0))
     
     def list_recent(self, limit: int = 50) -> List[dict]:
         """List recent memories.
@@ -276,18 +345,26 @@ class ArchivalMemory:
             List of recent memories
         """
         table = self._get_table()
-        results = table.search().limit(limit).to_list()
-        
+        arrow_table = table.to_arrow()
+        sorted_table = arrow_table.sort_by([("created_at", "descending")])
+
         memories = []
-        for r in results:
+        for i in range(sorted_table.num_rows):
+            memory_id = sorted_table["id"][i].as_py()
+            if memory_id == "_init_":
+                continue
+
+            metadata = self._parse_json_field(sorted_table["metadata"][i].as_py(), {})
+            tags_data = self._parse_json_field(sorted_table["tags"][i].as_py(), [])
             memories.append({
-                "id": r["id"],
-                "text": r["text"],
-                "metadata": json.loads(r["metadata"]) if r["metadata"] else {},
-                "tags": json.loads(r["tags"]) if r["tags"] else [],
-                "created_at": r["created_at"],
+                "id": memory_id,
+                "text": sorted_table["text"][i].as_py(),
+                "metadata": metadata,
+                "tags": tags_data,
+                "created_at": sorted_table["created_at"][i].as_py(),
             })
-        
-        # Sort by created_at descending
-        memories.sort(key=lambda m: m["created_at"], reverse=True)
-        return memories[:limit]
+
+            if len(memories) >= limit:
+                break
+
+        return memories
