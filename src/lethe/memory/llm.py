@@ -718,6 +718,25 @@ class ContextWindow:
                     for tc in m["tool_calls"]:
                         if "id" in tc:
                             tc["id"] = re.sub(r'[^a-zA-Z0-9-]', '-', tc["id"])
+            
+            # Post-sanitization: validate tool_use/tool_result pairing
+            # After merging and sanitizing, ensure every tool_result has a
+            # matching tool_use in the immediately preceding assistant message
+            valid = []
+            current_tool_ids = set()
+            for m in merged:
+                if m["role"] == "assistant" and m.get("tool_calls"):
+                    current_tool_ids = {tc["id"] for tc in m["tool_calls"]}
+                    valid.append(m)
+                elif m["role"] == "tool" and m.get("tool_call_id"):
+                    if m["tool_call_id"] in current_tool_ids:
+                        valid.append(m)
+                    else:
+                        logger.warning(f"Stripping unpaired tool_result after sanitization: {m.get('tool_call_id')}")
+                else:
+                    current_tool_ids = set()
+                    valid.append(m)
+            merged = valid
         
         return merged
 
