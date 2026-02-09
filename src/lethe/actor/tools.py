@@ -1,13 +1,11 @@
 """Tools available to actors for inter-actor communication and lifecycle management.
 
-These tools are registered with each actor's LLM client, giving the model
-the ability to spawn subagents, communicate with other actors, discover
-group members, and manage lifecycles.
+Butler (principal) tools: spawn, kill, send, discover, ping, wait, terminate
+Subagent tools: send, discover, wait, terminate, restart_self, spawn (always)
 """
 
-import json
 import logging
-from typing import List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from lethe.actor import Actor, ActorRegistry
@@ -69,7 +67,7 @@ def create_actor_tools(actor: "Actor", registry: "ActorRegistry") -> list:
             group: Group name to search. Empty = same group as you.
             
         Returns:
-            List of actors with their IDs, names, goals, and state
+            List of actors with their IDs, names, goals, state, and relationship
         """
         search_group = group or actor.config.group
         actors = registry.discover(search_group)
@@ -102,9 +100,9 @@ def create_actor_tools(actor: "Actor", registry: "ActorRegistry") -> list:
             Confirmation
         """
         actor.terminate(result)
-        return f"Terminated. Result sent to parent."
+        return "Terminated. Result sent to parent."
 
-    # Tools available to all actors
+    # --- Tools available to ALL actors ---
     tools = [
         (send_message, False),
         (wait_for_response, False),
@@ -112,97 +110,175 @@ def create_actor_tools(actor: "Actor", registry: "ActorRegistry") -> list:
         (terminate, False),
     ]
 
-    # Principal and actors with explicit spawn permission
-    if actor.is_principal or "spawn" in actor.config.tools:
-        async def spawn_subagent(
-            name: str,
-            goals: str,
-            group: str = "",
-            tools: str = "",
-            model: str = "",
-            max_turns: int = 20,
-        ) -> str:
-            """Spawn a new subagent actor to handle a subtask.
+    # --- spawn_subagent: available to ALL actors (subagents can delegate too) ---
+    async def spawn_subagent(
+        name: str,
+        goals: str,
+        group: str = "",
+        tools: str = "",
+        model: str = "",
+        max_turns: int = 20,
+    ) -> str:
+        """Spawn a new subagent actor to handle a subtask.
+        
+        Checks if an actor with this name already exists — returns it instead
+        of duplicating. Be DETAILED in goals — the subagent only knows what
+        you tell it here.
+        
+        Args:
+            name: Short name for the actor (e.g., "researcher", "coder")
+            goals: Detailed description of what to accomplish. Include all context the subagent needs.
+            group: Actor group for discovery (default: same as yours)
+            tools: Comma-separated tool names (e.g., "read_file,write_file,bash,web_search"). Empty = actor tools only.
+            model: LLM model override (empty = default aux model). Use main model for complex reasoning.
+            max_turns: Max LLM turns before forced termination (default 20)
             
-            Before spawning, checks if an actor with this name already exists
-            and is still running — returns the existing one instead of duplicating.
-            
-            The spawner chooses the model. Leave empty for the default aux model,
-            or specify a model name (e.g., "openrouter/moonshotai/kimi-k2.5" for
-            complex tasks that need the main model).
-            
-            Args:
-                name: Short name for the actor (e.g., "researcher", "coder")
-                goals: What this actor should accomplish (be specific)
-                group: Actor group for discovery (default: same as yours)
-                tools: Comma-separated tool names available to this actor (e.g., "read_file,bash,web_search")
-                model: LLM model to use (empty = default aux model, or specify for complex tasks)
-                max_turns: Max LLM turns before forced termination
-                
-            Returns:
-                Actor ID and confirmation, or existing actor info if duplicate
-            """
-            from lethe.actor import ActorConfig
-            
-            target_group = group or actor.config.group
-            
-            # Check for existing actor with same name
-            existing = registry.find_by_name(name, target_group)
-            if existing:
-                return (
-                    f"Actor '{name}' already exists (id={existing.id}, state={existing.state.value}).\n"
-                    f"Goals: {existing.config.goals}\n"
-                    f"Use send_message({existing.id}, ...) to communicate with it."
-                )
-            
-            tool_list = [t.strip() for t in tools.split(",") if t.strip()] if tools else []
-            
-            config = ActorConfig(
-                name=name,
-                group=target_group,
-                goals=goals,
-                tools=tool_list,
-                model=model,
-                max_turns=max_turns,
-            )
-            
-            child = registry.spawn(config, spawned_by=actor.id)
-            
-            model_info = f", model={model}" if model else ", model=aux (default)"
+        Returns:
+            Actor ID and confirmation, or existing actor info if duplicate
+        """
+        from lethe.actor import ActorConfig
+        
+        target_group = group or actor.config.group
+        
+        # Check for existing actor with same name
+        existing = registry.find_by_name(name, target_group)
+        if existing:
             return (
-                f"Spawned actor '{name}' (id={child.id}, group={target_group}{model_info}).\n"
-                f"Goals: {goals}\n"
-                f"Tools: {', '.join(tool_list) if tool_list else 'actor tools only'}\n"
-                f"It will work autonomously and message you when done."
+                f"Actor '{name}' already exists (id={existing.id}, state={existing.state.value}).\n"
+                f"Goals: {existing.config.goals}\n"
+                f"Use send_message({existing.id}, ...) to communicate with it."
             )
         
-        tools.append((spawn_subagent, False))
+        tool_list = [t.strip() for t in tools.split(",") if t.strip()] if tools else []
+        
+        config = ActorConfig(
+            name=name,
+            group=target_group,
+            goals=goals,
+            tools=tool_list,
+            model=model,
+            max_turns=max_turns,
+        )
+        
+        child = registry.spawn(config, spawned_by=actor.id)
+        
+        model_info = f", model={model}" if model else ", model=aux (default)"
+        return (
+            f"Spawned actor '{name}' (id={child.id}, group={target_group}{model_info}).\n"
+            f"Goals: {goals[:200]}\n"
+            f"Tools: {', '.join(tool_list) if tool_list else 'actor tools only'}\n"
+            f"It will work autonomously and message you when done."
+        )
+    
+    tools.append((spawn_subagent, False))
 
-    # Parent can kill immediate children
-    if actor.is_principal or actor.config.tools:  # Any actor with children can kill them
-        def kill_actor(actor_id: str) -> str:
-            """Kill an immediate child actor.
+    # --- ping_actor: check what a child/group member is doing ---
+    async def ping_actor(actor_id: str) -> str:
+        """Ping an actor to check its status and progress.
+        
+        Args:
+            actor_id: ID of the actor to ping
             
-            You can only kill actors that YOU spawned. This immediately
-            terminates the actor and you'll receive a termination notice.
+        Returns:
+            Status report: state, turn count, recent messages
+        """
+        target = registry.get(actor_id)
+        if target is None:
+            return f"Error: actor {actor_id} not found."
+        
+        lines = [
+            f"Actor: {target.config.name} (id={target.id})",
+            f"State: {target.state.value}",
+            f"Goals: {target.config.goals}",
+            f"Turns: {target._turns}/{target.config.max_turns}",
+            f"Messages: {len(target._messages)}",
+        ]
+        
+        if target.state == ActorState.TERMINATED:
+            lines.append(f"Result: {target._result or 'none'}")
+        
+        # Show last 3 messages
+        recent = target._messages[-3:]
+        if recent:
+            lines.append("Recent activity:")
+            for m in recent:
+                sender = registry.get(m.sender)
+                sender_name = sender.config.name if sender else m.sender
+                lines.append(f"  [{sender_name}]: {m.content[:100]}")
+        
+        return "\n".join(lines)
+    
+    tools.append((ping_actor, False))
+
+    # --- kill_actor: parent can kill immediate children ---
+    def kill_actor(actor_id: str) -> str:
+        """Kill an immediate child actor.
+        
+        You can only kill actors that YOU spawned. This immediately
+        terminates the actor and you'll receive a termination notice.
+        
+        Args:
+            actor_id: ID of the child actor to kill
+            
+        Returns:
+            Confirmation or error
+        """
+        target = registry.get(actor_id)
+        if target is None:
+            return f"Error: actor {actor_id} not found."
+        if target.spawned_by != actor.id:
+            return f"Error: {target.config.name} ({actor_id}) is not your child. You can only kill actors you spawned."
+        if target.state.value == "terminated":
+            return f"Actor {target.config.name} ({actor_id}) is already terminated."
+        
+        actor.kill_child(actor_id)
+        return f"Killed actor {target.config.name} ({actor_id})."
+    
+    tools.append((kill_actor, False))
+
+    # --- restart_self: subagent can restart with a better prompt ---
+    if not actor.is_principal:
+        def restart_self(new_goals: str) -> str:
+            """Restart yourself with a better prompt/goals.
+            
+            Use this if you realize your original goals were unclear or you need
+            a different approach. This terminates you and asks your parent to
+            respawn you with the new goals.
             
             Args:
-                actor_id: ID of the child actor to kill
+                new_goals: The improved goals/prompt for the new instance
                 
             Returns:
-                Confirmation or error
+                Confirmation (this actor will terminate after this)
             """
-            target = registry.get(actor_id)
-            if target is None:
-                return f"Error: actor {actor_id} not found."
-            if target.spawned_by != actor.id:
-                return f"Error: {target.config.name} ({actor_id}) is not your child. You can only kill actors you spawned."
-            if target.state.value == "terminated":
-                return f"Actor {target.config.name} ({actor_id}) is already terminated."
+            # Send restart request to parent
+            parent = registry.get(actor.spawned_by)
+            if parent and parent.state != ActorState.TERMINATED:
+                from lethe.actor import ActorMessage
+                msg = ActorMessage(
+                    sender=actor.id,
+                    recipient=actor.spawned_by,
+                    content=(
+                        f"[RESTART REQUEST] {actor.config.name} wants to restart with new goals:\n"
+                        f"{new_goals}\n"
+                        f"Tools needed: {','.join(actor.config.tools)}"
+                    ),
+                )
+                try:
+                    import asyncio
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(parent.send(msg))
+                except RuntimeError:
+                    parent._messages.append(msg)
+                    parent._inbox.put_nowait(msg)
             
-            actor.kill_child(actor_id)
-            return f"Killed actor {target.config.name} ({actor_id})."
+            actor.terminate(f"Restart requested with new goals: {new_goals[:200]}")
+            return "Terminating for restart. Parent will respawn with new goals."
         
-        tools.append((kill_actor, False))
+        tools.append((restart_self, False))
 
     return tools
+
+
+# Import for type checking in restart_self
+from lethe.actor import ActorState

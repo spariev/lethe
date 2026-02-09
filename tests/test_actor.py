@@ -294,18 +294,24 @@ class TestActorTools:
         assert "discover_actors" in tool_names
         assert "terminate" in tool_names
 
-    def test_worker_no_spawn_by_default(self, worker, registry):
+    def test_all_actors_can_spawn(self, worker, registry):
+        """All actors can spawn subagents (delegation at any level)."""
         tools = create_actor_tools(worker, registry)
         tool_names = {func.__name__ for func, _ in tools}
-        assert "spawn_subagent" not in tool_names
+        assert "spawn_subagent" in tool_names
         assert "send_message" in tool_names
 
-    def test_worker_with_spawn_permission(self, registry, principal):
-        config = ActorConfig(name="manager", group="main", goals="Manage tasks", tools=["spawn"])
-        manager = registry.spawn(config, spawned_by=principal.id)
-        tools = create_actor_tools(manager, registry)
+    def test_worker_gets_restart_self(self, worker, registry):
+        """Workers (non-principal) get restart_self tool."""
+        tools = create_actor_tools(worker, registry)
         tool_names = {func.__name__ for func, _ in tools}
-        assert "spawn_subagent" in tool_names
+        assert "restart_self" in tool_names
+
+    def test_principal_no_restart_self(self, principal, registry):
+        """Principal doesn't get restart_self."""
+        tools = create_actor_tools(principal, registry)
+        tool_names = {func.__name__ for func, _ in tools}
+        assert "restart_self" not in tool_names
 
     @pytest.mark.asyncio
     async def test_send_message_tool(self, principal, worker, registry):
@@ -416,6 +422,37 @@ class TestActorTools:
         assert "not your child" in result
         assert stranger.state == ActorState.RUNNING
 
+    @pytest.mark.asyncio
+    async def test_ping_actor_tool(self, principal, worker, registry):
+        """Ping shows actor status."""
+        tools = create_actor_tools(principal, registry)
+        ping_fn = next(func for func, _ in tools if func.__name__ == "ping_actor")
+        
+        result = await ping_fn(actor_id=worker.id)
+        assert "researcher" in result
+        assert "running" in result
+        assert worker.config.goals in result
+
+    @pytest.mark.asyncio
+    async def test_ping_terminated_actor(self, principal, worker, registry):
+        worker.terminate("All done")
+        tools = create_actor_tools(principal, registry)
+        ping_fn = next(func for func, _ in tools if func.__name__ == "ping_actor")
+        
+        result = await ping_fn(actor_id=worker.id)
+        assert "terminated" in result
+        assert "All done" in result
+
+    def test_restart_self_tool(self, worker, registry):
+        """restart_self terminates and sends restart request to parent."""
+        tools = create_actor_tools(worker, registry)
+        restart_fn = next(func for func, _ in tools if func.__name__ == "restart_self")
+        
+        result = restart_fn(new_goals="Better goals here")
+        assert "restart" in result.lower()
+        assert worker.state == ActorState.TERMINATED
+        assert "Restart requested" in worker._result
+
 
 # ── System Prompt Building ────────────────────────────────────
 
@@ -425,7 +462,10 @@ class TestSystemPrompt:
         prompt = principal.build_system_prompt()
         assert "principal actor" in prompt
         assert "ONLY actor" in prompt
+        assert "COORDINATOR" in prompt
+        assert "NEVER" in prompt  # Never do work yourself
         assert "spawn" in prompt.lower()
+        assert "ping_actor" in prompt
         assert "kill_actor" in prompt
 
     def test_worker_prompt(self, worker, principal):

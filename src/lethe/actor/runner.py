@@ -4,18 +4,22 @@ The runner manages the lifecycle of a non-principal actor:
 1. Build system prompt from actor config + group awareness
 2. Run LLM tool loop until goals are met or max turns reached
 3. Handle inter-actor message exchange
-4. Terminate and report results to parent
+4. Auto-notify parent after 1 minute of execution
+5. Terminate and report results to parent
 """
 
 import asyncio
-import json
 import logging
+import time
 from typing import Callable, Dict, List, Optional
 
 from lethe.actor import Actor, ActorConfig, ActorMessage, ActorRegistry, ActorState
 from lethe.actor.tools import create_actor_tools
 
 logger = logging.getLogger(__name__)
+
+# Notify parent if task takes longer than this (seconds)
+PROGRESS_NOTIFY_INTERVAL = 60
 
 
 class ActorRunner:
@@ -28,63 +32,75 @@ class ActorRunner:
         llm_factory: Callable,
         available_tools: Optional[Dict] = None,
     ):
-        """
-        Args:
-            actor: The actor to run
-            registry: Actor registry for inter-actor communication
-            llm_factory: Factory to create LLM client for this actor
-            available_tools: Dict of tool_name -> (func, schema) available for actors
-        """
         self.actor = actor
         self.registry = registry
         self.llm_factory = llm_factory
         self.available_tools = available_tools or {}
 
-    async def run(self) -> str:
-        """Run the actor's LLM loop until completion or max turns.
-        
-        Returns:
-            The actor's result string
-        """
+    async def _notify_parent(self, message: str):
+        """Send a status notification to the parent actor."""
         actor = self.actor
+        if actor.spawned_by:
+            parent = self.registry.get(actor.spawned_by)
+            if parent and parent.state != ActorState.TERMINATED:
+                msg = ActorMessage(
+                    sender=actor.id,
+                    recipient=actor.spawned_by,
+                    content=message,
+                )
+                try:
+                    await parent.send(msg)
+                except Exception as e:
+                    logger.warning(f"Failed to notify parent: {e}")
+
+    async def run(self) -> str:
+        """Run the actor's LLM loop until completion or max turns."""
+        actor = self.actor
+        start_time = time.monotonic()
+        last_notify_time = start_time
         
         try:
             # Create LLM client for this actor
             llm = await self.llm_factory(actor)
             actor._llm = llm
             
-            # Register actor-specific tools
+            # Register actor-specific tools (send, discover, terminate, spawn, ping, kill, restart)
             actor_tools = create_actor_tools(actor, self.registry)
             for func, _ in actor_tools:
                 llm.add_tool(func)
             
             # Register requested tools from available pool
+            registered_tools = []
             for tool_name in actor.config.tools:
                 if tool_name in self.available_tools:
                     func, schema = self.available_tools[tool_name]
                     llm.add_tool(func, schema)
+                    registered_tools.append(tool_name)
                 else:
                     logger.warning(f"Actor {actor.id}: requested tool '{tool_name}' not available")
+            
+            if registered_tools:
+                logger.info(f"Actor {actor.id}: registered tools: {registered_tools}")
             
             # Build initial prompt
             system_prompt = actor.build_system_prompt()
             llm.context.system_prompt = system_prompt
             
-            # Initial message to kick off the actor
             initial_message = (
                 f"You are actor '{actor.config.name}'. Your goals:\n\n"
                 f"{actor.config.goals}\n\n"
-                f"Begin working on your task. Use tools as needed. "
-                f"When done, call terminate(result) with a summary."
+                f"Begin working. Use your tools to accomplish the task. "
+                f"When done, call terminate(result) with a detailed summary of what you accomplished.\n"
+                f"If something goes wrong, notify your parent with send_message().\n"
+                f"If your goals are unclear, use restart_self(new_goals) with a better prompt."
             )
             
-            logger.info(f"Actor {actor.id} ({actor.config.name}) starting execution")
+            logger.info(f"Actor {actor.id} ({actor.config.name}) starting, tools: {len(llm._tools)}")
             
-            # Run the LLM loop
+            response = ""
             for turn in range(actor.config.max_turns):
                 actor._turns = turn + 1
                 
-                # Check if terminated (by self via tool call)
                 if actor.state == ActorState.TERMINATED:
                     break
                 
@@ -101,7 +117,6 @@ class ActorRunner:
                 if turn == 0:
                     message = initial_message
                 elif incoming:
-                    # Format incoming messages
                     parts = []
                     for msg in incoming:
                         sender = self.registry.get(msg.sender)
@@ -109,38 +124,46 @@ class ActorRunner:
                         parts.append(f"[Message from {sender_name}]: {msg.content}")
                     message = "\n".join(parts)
                 else:
-                    # No incoming messages — continue working
-                    message = "[System: Continue working on your goals. Call terminate(result) when done.]"
+                    message = "[Continue working on your goals. Call terminate(result) when done.]"
+                
+                # Check if we should notify parent about long-running task
+                elapsed = time.monotonic() - start_time
+                if elapsed - (last_notify_time - start_time) > PROGRESS_NOTIFY_INTERVAL:
+                    last_notify_time = time.monotonic()
+                    await self._notify_parent(
+                        f"[PROGRESS] {actor.config.name} still working (turn {turn + 1}/{actor.config.max_turns}, "
+                        f"{int(elapsed)}s elapsed). Last: {response[:100] if response else 'starting...'}"
+                    )
                 
                 # Call LLM
                 try:
                     response = await llm.chat(message)
                 except Exception as e:
                     logger.error(f"Actor {actor.id} LLM error: {e}")
+                    await self._notify_parent(f"[ERROR] {actor.config.name} hit an error: {e}")
                     actor.terminate(f"Error: {e}")
                     break
                 
-                # Check if actor terminated during tool execution
                 if actor.state == ActorState.TERMINATED:
                     break
                 
-                # If response is just acknowledgment, don't loop unnecessarily
-                if response and response.strip().lower() in ("ok", "done", "understood"):
-                    continue
-                
-                # Wait briefly for any incoming messages before next turn
+                # Brief pause to collect any incoming messages
                 try:
-                    await asyncio.wait_for(actor._inbox.get(), timeout=2.0)
+                    await asyncio.wait_for(actor._inbox.get(), timeout=1.0)
                 except asyncio.TimeoutError:
                     pass
             
             # Force terminate if max turns reached
             if actor.state != ActorState.TERMINATED:
-                logger.warning(f"Actor {actor.id} hit max turns ({actor.config.max_turns})")
-                actor.terminate(f"Max turns reached. Last response: {response[:200] if response else 'none'}")
+                elapsed = time.monotonic() - start_time
+                result = f"Max turns reached ({actor.config.max_turns} turns, {int(elapsed)}s). Last: {response[:200] if response else 'none'}"
+                logger.warning(f"Actor {actor.id} hit max turns")
+                await self._notify_parent(f"[MAX TURNS] {actor.config.name}: {result}")
+                actor.terminate(result)
             
         except Exception as e:
             logger.error(f"Actor {actor.id} runner error: {e}", exc_info=True)
+            await self._notify_parent(f"[FATAL] {actor.config.name} crashed: {e}")
             actor.terminate(f"Runner error: {e}")
         
         return actor._result or "No result"
@@ -152,10 +175,7 @@ async def run_actor_in_background(
     llm_factory: Callable,
     available_tools: Optional[Dict] = None,
 ) -> asyncio.Task:
-    """Start an actor running in the background.
-    
-    Returns an asyncio.Task that can be awaited for the result.
-    """
+    """Start an actor running in the background."""
     runner = ActorRunner(actor, registry, llm_factory, available_tools)
     task = asyncio.create_task(runner.run(), name=f"actor-{actor.id}")
     actor._task = task
