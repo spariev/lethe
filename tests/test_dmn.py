@@ -25,7 +25,7 @@ def registry():
 @pytest.fixture
 def butler(registry):
     return registry.spawn(
-        ActorConfig(name="butler", group="main", goals="Serve the user"),
+        ActorConfig(name="cortex", group="main", goals="Serve the user"),
         is_principal=True,
     )
 

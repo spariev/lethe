@@ -16,7 +16,7 @@ class MemoryStore:
     """Unified memory store.
     
     Provides:
-    - blocks: Core memory as files in workspace (persona.md, human.md, etc.)
+    - blocks: Core memory as files in workspace (identity.md, human.md, project.md, etc.)
     - archival: Long-term semantic memory with hybrid search (LanceDB)
     - messages: Conversation history (LanceDB)
     

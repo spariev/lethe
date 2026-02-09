@@ -1,7 +1,7 @@
 """Default Mode Network (DMN) — persistent background subagent.
 
 The DMN is always-on, triggered by heartbeats. It replaces the old
-heartbeat-to-butler pipeline with a dedicated thinking agent that:
+heartbeat-to-cortex pipeline with a dedicated thinking agent that:
 
 - Scans goals, todos, reminders
 - Reorganizes memory, writes reflections
@@ -175,7 +175,7 @@ class DefaultModeNetwork:
                 if actor.state == ActorState.TERMINATED:
                     break
                 
-                # Check inbox for messages (from butler)
+                # Check inbox for messages (from cortex)
                 incoming = []
                 while not actor._inbox.empty():
                     try:
@@ -201,7 +201,7 @@ class DefaultModeNetwork:
                 if actor.state == ActorState.TERMINATED:
                     break
                 
-                # Check if DMN sent a message to butler
+                # Check if DMN sent a message to cortex
                 for m in actor._messages:
                     if m.sender == actor.id and m.recipient == self.cortex_id:
                         if "[URGENT]" in m.content or "remind" in m.content.lower():

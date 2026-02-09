@@ -2,7 +2,7 @@
 """Demo: Actor model usage patterns.
 
 Shows how to:
-1. Create a principal actor (butler)
+1. Create a principal actor (cortex)
 2. Spawn subagent actors for tasks
 3. Inter-actor communication
 4. Group discovery
@@ -22,11 +22,11 @@ async def demo_basic_spawn():
     registry = ActorRegistry()
     
     # Create principal
-    butler = registry.spawn(
-        ActorConfig(name="butler", group="demo", goals="Coordinate tasks for the user"),
+    cortex = registry.spawn(
+        ActorConfig(name="cortex", group="demo", goals="Coordinate tasks for the user"),
         is_principal=True,
     )
-    print(f"Principal: {butler.config.name} (id={butler.id})")
+    print(f"Principal: {cortex.config.name} (id={cortex.id})")
     
     # Spawn a researcher
     researcher = registry.spawn(
@@ -37,13 +37,13 @@ async def demo_basic_spawn():
             tools=["web_search", "read_file"],
             max_turns=10,
         ),
-        spawned_by=butler.id,
+        spawned_by=cortex.id,
     )
     print(f"Spawned: {researcher.config.name} (id={researcher.id})")
     
     # Researcher sends progress update
-    await researcher.send_to(butler.id, "Found 3 papers on quantum error correction")
-    msg = await butler.wait_for_reply(timeout=1.0)
+    await researcher.send_to(cortex.id, "Found 3 papers on quantum error correction")
+    msg = await cortex.wait_for_reply(timeout=1.0)
     print(f"Butler received: {msg.content}")
     
     # Researcher finishes
@@ -51,11 +51,11 @@ async def demo_basic_spawn():
     
     # Butler gets termination notice
     await asyncio.sleep(0.1)
-    notice = await butler.wait_for_reply(timeout=1.0)
+    notice = await cortex.wait_for_reply(timeout=1.0)
     print(f"Butler got notice: {notice.content[:80]}...")
     
     print(f"\nActive actors: {registry.active_count}")
-    print(f"Butler state: {butler.state.value}")
+    print(f"Butler state: {cortex.state.value}")
     print(f"Researcher state: {researcher.state.value}")
 
 
@@ -65,23 +65,23 @@ async def demo_multi_actor():
     
     registry = ActorRegistry()
     
-    butler = registry.spawn(
-        ActorConfig(name="butler", group="project", goals="Build a web app"),
+    cortex = registry.spawn(
+        ActorConfig(name="cortex", group="project", goals="Build a web app"),
         is_principal=True,
     )
     
     # Spawn team
     designer = registry.spawn(
         ActorConfig(name="designer", group="project", goals="Design the UI mockups"),
-        spawned_by=butler.id,
+        spawned_by=cortex.id,
     )
     coder = registry.spawn(
         ActorConfig(name="coder", group="project", goals="Implement the frontend"),
-        spawned_by=butler.id,
+        spawned_by=cortex.id,
     )
     reviewer = registry.spawn(
         ActorConfig(name="reviewer", group="project", goals="Review code quality"),
-        spawned_by=butler.id,
+        spawned_by=cortex.id,
     )
     
     print(f"Team assembled: {registry.active_count} actors")
@@ -102,8 +102,8 @@ async def demo_multi_actor():
     review_msg = await reviewer.wait_for_reply(timeout=1.0)
     print(f"\nReviewer got: {review_msg.content}")
     
-    # Reviewer reports to butler
-    await reviewer.send_to(butler.id, "Code review: LGTM, all screens implemented correctly")
+    # Reviewer reports to cortex
+    await reviewer.send_to(cortex.id, "Code review: LGTM, all screens implemented correctly")
     reviewer.terminate("Review complete: approved")
     
     coder.terminate("Implementation complete: 3 screens built")
@@ -121,15 +121,15 @@ async def demo_group_isolation():
     
     registry = ActorRegistry()
     
-    butler = registry.spawn(
-        ActorConfig(name="butler", group="main", goals="Manage multiple projects"),
+    cortex = registry.spawn(
+        ActorConfig(name="cortex", group="main", goals="Manage multiple projects"),
         is_principal=True,
     )
     
     # Two separate teams in different groups
     team_a_lead = registry.spawn(
         ActorConfig(name="alpha-lead", group="team_alpha", goals="Build the API"),
-        spawned_by=butler.id,
+        spawned_by=cortex.id,
     )
     team_a_dev = registry.spawn(
         ActorConfig(name="alpha-dev", group="team_alpha", goals="Implement endpoints"),
@@ -138,7 +138,7 @@ async def demo_group_isolation():
     
     team_b_lead = registry.spawn(
         ActorConfig(name="beta-lead", group="team_beta", goals="Build the frontend"),
-        spawned_by=butler.id,
+        spawned_by=cortex.id,
     )
     
     print(f"Total actors: {registry.active_count}")
@@ -147,7 +147,7 @@ async def demo_group_isolation():
     print(f"Main sees: {[a.name for a in registry.discover('main')]}")
     
     # Butler can see its direct children
-    children = registry.get_children(butler.id)
+    children = registry.get_children(cortex.id)
     print(f"Butler's children: {[c.config.name for c in children]}")
 
 
@@ -157,17 +157,17 @@ async def demo_system_prompt():
     
     registry = ActorRegistry()
     
-    butler = registry.spawn(
-        ActorConfig(name="butler", group="demo", goals="Serve the user"),
+    cortex = registry.spawn(
+        ActorConfig(name="cortex", group="demo", goals="Serve the user"),
         is_principal=True,
     )
     worker = registry.spawn(
         ActorConfig(name="researcher", group="demo", goals="Research AI papers"),
-        spawned_by=butler.id,
+        spawned_by=cortex.id,
     )
     
     print("--- Principal System Prompt ---")
-    print(butler.build_system_prompt()[:500])
+    print(cortex.build_system_prompt()[:500])
     print("...")
     print()
     print("--- Worker System Prompt ---")

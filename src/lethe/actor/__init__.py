@@ -7,8 +7,8 @@ Actors are autonomous agents that can:
 - Spawn child actors for subtasks
 - Terminate themselves or their immediate children
 
-The principal actor ("butler") is the only one that talks to the user.
-All other actors communicate through the principal or with each other.
+The principal actor ("cortex") is the only one that talks to the user.
+All other actors communicate through the cortex or with each other.
 """
 
 import asyncio

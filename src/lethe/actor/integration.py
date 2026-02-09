@@ -66,7 +66,7 @@ class ActorSystem:
         """Set up the actor system.
         
         1. Collect agent's tools for subagent use
-        2. Strip non-actor tools from the agent's LLM (butler doesn't use them)
+        2. Strip non-actor tools from the agent's LLM (cortex doesn't use them)
         3. Create principal actor
         4. Register actor tools with the agent
         """

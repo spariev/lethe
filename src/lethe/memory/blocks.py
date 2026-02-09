@@ -1,7 +1,7 @@
 """Memory blocks - Core memory that's always in context.
 
 Blocks are stored as simple text files in a directory.
-Each file is named after the block label (e.g., persona.md, human.md).
+Each file is named after the block label (e.g., identity.md, human.md).
 Metadata is stored in a companion .meta.json file.
 """
 

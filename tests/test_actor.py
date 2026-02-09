@@ -40,7 +40,7 @@ def registry():
 @pytest.fixture
 def principal_config():
     return ActorConfig(
-        name="butler",
+        name="cortex",
         group="main",
         goals="Serve the user. Delegate subtasks to subagents.",
     )
@@ -74,7 +74,7 @@ class TestActorLifecycle:
     def test_create_actor(self, principal):
         assert principal.state == ActorState.RUNNING
         assert principal.is_principal is True
-        assert principal.config.name == "butler"
+        assert principal.config.name == "cortex"
         assert len(principal.id) == 8
 
     def test_create_worker(self, worker, principal):
@@ -121,7 +121,7 @@ class TestActorRegistry:
         actors = registry.discover("main")
         assert len(actors) == 2
         names = {a.name for a in actors}
-        assert names == {"butler", "researcher"}
+        assert names == {"cortex", "researcher"}
 
     def test_discover_empty_group(self, registry, principal):
         actors = registry.discover("nonexistent")
@@ -131,7 +131,7 @@ class TestActorRegistry:
         worker.terminate("done")
         actors = registry.discover("main")
         assert len(actors) == 1
-        assert actors[0].name == "butler"
+        assert actors[0].name == "cortex"
 
     def test_get_children(self, registry, principal):
         w1 = registry.spawn(ActorConfig(name="w1", group="main", goals="t1"), spawned_by=principal.id)
@@ -349,7 +349,7 @@ class TestActorTools:
         
         result = discover_fn()
         assert "researcher" in result
-        assert "butler" in result
+        assert "cortex" in result
 
     def test_discover_tool_shows_relationships(self, registry, principal, worker):
         """Discover shows [child], [sibling], [parent] labels."""
@@ -474,11 +474,11 @@ class TestSystemPrompt:
         assert "researcher" in prompt
         assert worker.config.goals in prompt
         assert "CANNOT talk to the user" in prompt
-        assert "butler" in prompt  # Parent name shown
+        assert "cortex" in prompt  # Parent name shown
 
     def test_group_awareness_in_prompt(self, principal, worker):
         prompt = worker.build_system_prompt()
-        assert "butler" in prompt
+        assert "cortex" in prompt
         assert "visible_actors" in prompt
 
     def test_relationship_labels_in_prompt(self, registry, principal, worker):
@@ -495,7 +495,7 @@ class TestSystemPrompt:
         prompt = worker.build_system_prompt()
         assert "Check the database" in prompt
         assert "inbox" in prompt
-        assert "butler" in prompt  # Sender name shown
+        assert "cortex" in prompt  # Sender name shown
 
 
 # ── Context Messages ──────────────────────────────────────────
@@ -594,7 +594,7 @@ class TestExampleScenarios:
     @pytest.mark.asyncio
     async def test_research_delegation(self, registry):
         butler = registry.spawn(
-            ActorConfig(name="butler", group="research", goals="Help user with research"),
+            ActorConfig(name="cortex", group="research", goals="Help user with research"),
             is_principal=True,
         )
         
@@ -615,7 +615,7 @@ class TestExampleScenarios:
     @pytest.mark.asyncio
     async def test_multi_actor_collaboration(self, registry):
         butler = registry.spawn(
-            ActorConfig(name="butler", group="project", goals="Coordinate the project"),
+            ActorConfig(name="cortex", group="project", goals="Coordinate the project"),
             is_principal=True,
         )
         
@@ -649,7 +649,7 @@ class TestExampleScenarios:
     async def test_butler_kills_stuck_worker(self, registry):
         """Butler spawns worker, kills it when stuck."""
         butler = registry.spawn(
-            ActorConfig(name="butler", group="main", goals="Manage"),
+            ActorConfig(name="cortex", group="main", goals="Manage"),
             is_principal=True,
         )
         worker = registry.spawn(
