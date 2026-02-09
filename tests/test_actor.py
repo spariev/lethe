@@ -288,7 +288,7 @@ class TestActorTools:
     def test_principal_gets_spawn_and_kill_tools(self, principal, registry):
         tools = create_actor_tools(principal, registry)
         tool_names = {func.__name__ for func, _ in tools}
-        assert "spawn_subagent" in tool_names
+        assert "spawn_actor" in tool_names
         assert "kill_actor" in tool_names
         assert "send_message" in tool_names
         assert "discover_actors" in tool_names
@@ -298,7 +298,7 @@ class TestActorTools:
         """All actors can spawn subagents (delegation at any level)."""
         tools = create_actor_tools(worker, registry)
         tool_names = {func.__name__ for func, _ in tools}
-        assert "spawn_subagent" in tool_names
+        assert "spawn_actor" in tool_names
         assert "send_message" in tool_names
 
     def test_worker_gets_restart_self(self, worker, registry):
@@ -367,9 +367,9 @@ class TestActorTools:
         assert worker.state == ActorState.TERMINATED
 
     @pytest.mark.asyncio
-    async def test_spawn_subagent_tool(self, principal, registry):
+    async def test_spawn_actor_tool(self, principal, registry):
         tools = create_actor_tools(principal, registry)
-        spawn_fn = next(func for func, _ in tools if func.__name__ == "spawn_subagent")
+        spawn_fn = next(func for func, _ in tools if func.__name__ == "spawn_actor")
         
         result = await spawn_fn(
             name="coder",
@@ -383,7 +383,7 @@ class TestActorTools:
     async def test_spawn_duplicate_returns_existing(self, principal, worker, registry):
         """Spawning actor with same name returns existing instead of duplicating."""
         tools = create_actor_tools(principal, registry)
-        spawn_fn = next(func for func, _ in tools if func.__name__ == "spawn_subagent")
+        spawn_fn = next(func for func, _ in tools if func.__name__ == "spawn_actor")
         
         result = await spawn_fn(name="researcher", goals="same task")
         assert "already exists" in result
@@ -394,7 +394,7 @@ class TestActorTools:
     async def test_spawn_with_model_choice(self, principal, registry):
         """Butler can specify model for subagent."""
         tools = create_actor_tools(principal, registry)
-        spawn_fn = next(func for func, _ in tools if func.__name__ == "spawn_subagent")
+        spawn_fn = next(func for func, _ in tools if func.__name__ == "spawn_actor")
         
         result = await spawn_fn(
             name="thinker",

@@ -280,7 +280,7 @@ class Actor:
         parts.append("\n<rules>")
         if self.is_principal:
             parts.append("- You NEVER use tools yourself. Spawn subagents for ALL work.")
-            parts.append("- Use `spawn_subagent(name, goals, tools, ...)` — be DETAILED in goals")
+            parts.append("- Use `spawn_actor(name, goals, tools, ...)` — be DETAILED in goals")
             parts.append("- Use `ping_actor(actor_id)` to check what a subagent is doing")
             parts.append("- Use `kill_actor(actor_id)` to terminate a stuck child")
             parts.append("- Use `send_message(actor_id, content)` to give instructions or ask for status")
@@ -289,7 +289,7 @@ class Actor:
         else:
             parts.append("- Use your tools to accomplish your goals")
             parts.append("- Use `send_message(actor_id, content)` to message parent, siblings, or children")
-            parts.append("- Use `spawn_subagent(...)` if you need to delegate a subtask")
+            parts.append("- Use `spawn_actor(...)` if you need to delegate a subtask")
             parts.append("- Use `restart_self(new_goals)` if your goals are unclear or you need a different approach")
             parts.append(f"- Report results to your parent '{parent_name}' (id={self.spawned_by}) before terminating")
             parts.append("- Use `terminate(result)` when done — include a detailed summary")

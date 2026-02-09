@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 CORTEX_TOOL_NAMES = {
     # Actor tools (added by actor system)
     'send_message', 'wait_for_response', 'discover_actors',
-    'terminate', 'spawn_subagent', 'kill_actor', 'ping_actor',
+    'terminate', 'spawn_actor', 'kill_actor', 'ping_actor',
     # Memory tools (cortex manages its own memory)
     'memory_read', 'memory_update', 'memory_append',
     'archival_search', 'archival_insert', 'conversation_search',

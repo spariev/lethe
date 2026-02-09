@@ -110,8 +110,8 @@ def create_actor_tools(actor: "Actor", registry: "ActorRegistry") -> list:
         (terminate, False),
     ]
 
-    # --- spawn_subagent: available to ALL actors (subagents can delegate too) ---
-    async def spawn_subagent(
+    # --- spawn_actor: available to ALL actors (subagents can delegate too) ---
+    async def spawn_actor(
         name: str,
         goals: str,
         group: str = "",
@@ -170,7 +170,7 @@ def create_actor_tools(actor: "Actor", registry: "ActorRegistry") -> list:
             f"It will work autonomously and message you when done."
         )
     
-    tools.append((spawn_subagent, False))
+    tools.append((spawn_actor, False))
 
     # --- ping_actor: check what a child/group member is doing ---
     async def ping_actor(actor_id: str) -> str:
