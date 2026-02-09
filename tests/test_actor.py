@@ -127,11 +127,13 @@ class TestActorRegistry:
         actors = registry.discover("nonexistent")
         assert len(actors) == 0
 
-    def test_discover_excludes_terminated(self, registry, principal, worker):
+    def test_discover_includes_recently_terminated(self, registry, principal, worker):
         worker.terminate("done")
         actors = registry.discover("main")
-        assert len(actors) == 1
-        assert actors[0].name == "cortex"
+        assert len(actors) == 2  # Both visible — terminated kept for 1 hour
+        terminated = [a for a in actors if a.state == ActorState.TERMINATED]
+        assert len(terminated) == 1
+        assert terminated[0].name == "researcher"
 
     def test_get_children(self, registry, principal):
         w1 = registry.spawn(ActorConfig(name="w1", group="main", goals="t1"), spawned_by=principal.id)
@@ -139,12 +141,28 @@ class TestActorRegistry:
         children = registry.get_children(principal.id)
         assert len(children) == 2
 
-    def test_cleanup_terminated(self, registry, principal, worker):
+    def test_cleanup_stale_actors(self, registry, principal, worker):
+        """Terminated actors stay for 1 hour, then get cleaned up."""
         worker.terminate("done")
         assert len(registry._actors) == 2
+        
+        # Regular cleanup: too recent, should NOT remove
+        registry.cleanup_terminated()
+        assert len(registry._actors) == 2
+        assert registry.get(worker.id) is not None
+        
+        # Simulate aging past the threshold
+        from datetime import timedelta
+        worker.terminated_at -= timedelta(seconds=registry.STALE_SECONDS + 1)
         registry.cleanup_terminated()
         assert len(registry._actors) == 1
         assert registry.get(worker.id) is None
+    
+    def test_cleanup_force(self, registry, principal, worker):
+        """Force cleanup removes all terminated immediately."""
+        worker.terminate("done")
+        registry.cleanup_terminated(force=True)
+        assert len(registry._actors) == 1
 
     def test_find_by_name(self, registry, principal, worker):
         found = registry.find_by_name("researcher")

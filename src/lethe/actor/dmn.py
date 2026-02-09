@@ -190,6 +190,9 @@ class DefaultModeNetwork:
             previous_state=previous_state,
         )
         
+        # Periodic cleanup: remove actors terminated > 1 hour ago
+        self.registry.cleanup_terminated()
+        
         logger.info(f"DMN round starting ({len(llm._tools)} tools)")
         
         # Run the round

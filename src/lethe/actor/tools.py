@@ -72,7 +72,7 @@ def create_actor_tools(actor: "Actor", registry: "ActorRegistry") -> list:
         search_group = group or actor.config.group
         actors = registry.discover(search_group)
         if not actors:
-            return f"No active actors in group '{search_group}'."
+            return f"No actors in group '{search_group}'."
         
         lines = [f"Actors in group '{search_group}':"]
         for info in actors:
@@ -84,7 +84,12 @@ def create_actor_tools(actor: "Actor", registry: "ActorRegistry") -> list:
                 relationship = " [parent]"
             elif info.spawned_by == actor.spawned_by and actor.spawned_by:
                 relationship = " [sibling]"
-            lines.append(f"  {info.name} (id={info.id}, state={info.state.value}){marker}{relationship}: {info.goals}")
+            result_info = ""
+            if info.state == ActorState.TERMINATED:
+                target = registry.get(info.id)
+                if target and target._result:
+                    result_info = f" result: {target._result[:100]}"
+            lines.append(f"  {info.name} (id={info.id}, state={info.state.value}){marker}{relationship}: {info.goals}{result_info}")
         return "\n".join(lines)
 
     def terminate(result: str = "") -> str:

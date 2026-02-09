@@ -95,6 +95,8 @@ class Actor:
         self.spawned_by = spawned_by or ""
         self.is_principal = is_principal
         self.state = ActorState.INITIALIZING
+        self.created_at: datetime = datetime.now(timezone.utc)
+        self.terminated_at: Optional[datetime] = None
         
         # Message queue (from other actors)
         self._inbox: asyncio.Queue[ActorMessage] = asyncio.Queue()
@@ -192,6 +194,7 @@ class Actor:
             return  # Already terminated
         self._result = result or f"Actor {self.config.name} terminated"
         self.state = ActorState.TERMINATED
+        self.terminated_at = datetime.now(timezone.utc)
         # Cancel async task if running
         if self._task and not self._task.done():
             self._task.cancel()
@@ -393,18 +396,18 @@ class ActorRegistry:
         return None
 
     def discover(self, group: str) -> List[ActorInfo]:
-        """Discover all non-terminated actors in a group."""
+        """Discover all actors in a group (including recently terminated)."""
         return [
             actor.info
             for actor in self._actors.values()
-            if actor.config.group == group and actor.state != ActorState.TERMINATED
+            if actor.config.group == group
         ]
 
     def get_children(self, parent_id: str) -> List[Actor]:
-        """Get all non-terminated actors spawned by a given parent."""
+        """Get all actors spawned by a given parent (including recently terminated)."""
         return [
             actor for actor in self._actors.values()
-            if actor.spawned_by == parent_id and actor.state != ActorState.TERMINATED
+            if actor.spawned_by == parent_id
         ]
 
     def _on_actor_terminated(self, actor_id: str):
@@ -438,13 +441,30 @@ class ActorRegistry:
         """Info for all actors (including terminated)."""
         return [a.info for a in self._actors.values()]
 
-    def cleanup_terminated(self):
-        """Remove terminated actors from registry."""
-        terminated = [aid for aid, a in self._actors.items() if a.state == ActorState.TERMINATED]
-        for aid in terminated:
+    # Stale threshold — terminated actors kept for querying results
+    STALE_SECONDS = 3600  # 1 hour
+
+    def cleanup_terminated(self, force: bool = False):
+        """Remove stale terminated actors from registry.
+        
+        Args:
+            force: If True, remove ALL terminated actors (used on shutdown).
+                   If False, only remove actors terminated > STALE_SECONDS ago.
+        """
+        now = datetime.now(timezone.utc)
+        stale = []
+        for aid, a in self._actors.items():
+            if a.state != ActorState.TERMINATED:
+                continue
+            if force:
+                stale.append(aid)
+            elif a.terminated_at and (now - a.terminated_at).total_seconds() > self.STALE_SECONDS:
+                stale.append(aid)
+        
+        for aid in stale:
             actor = self._actors.pop(aid)
             # Clean name index
             if self._name_index.get(actor.config.name) == aid:
                 del self._name_index[actor.config.name]
-        if terminated:
-            logger.info(f"Registry: cleaned up {len(terminated)} terminated actors")
+        if stale:
+            logger.info(f"Registry: cleaned up {len(stale)} stale actors (>{self.STALE_SECONDS}s)")

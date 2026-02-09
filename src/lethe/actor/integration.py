@@ -235,7 +235,7 @@ class ActorSystem:
         if self.principal and self.principal.state != ActorState.TERMINATED:
             self.principal.terminate("System shutdown")
         
-        self.registry.cleanup_terminated()
+        self.registry.cleanup_terminated(force=True)
         logger.info("Actor system shut down")
 
     @property
