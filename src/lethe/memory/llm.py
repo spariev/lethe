@@ -1012,13 +1012,17 @@ class AsyncLLMClient:
                     self._notify_status("tool_call", tool_name)
                     
                     # Execute tool (handle both sync and async)
+                    # Sync tools run in thread executor to avoid blocking the event loop
                     handler = self.get_tool(tool_name)
                     if handler:
                         try:
                             if asyncio.iscoroutinefunction(handler):
                                 result = await handler(**tool_args)
                             else:
-                                result = handler(**tool_args)
+                                loop = asyncio.get_event_loop()
+                                result = await loop.run_in_executor(
+                                    None, lambda: handler(**tool_args)
+                                )
                         except Exception as e:
                             result = f"Error: {e}"
                             logger.error(f"Tool {tool_name} failed: {e}")
