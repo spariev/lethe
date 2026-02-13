@@ -794,11 +794,17 @@ class AsyncLLMClient:
         # Set up summarizer callback
         self.context._summarizer = self._summarize_messages_sync
         
-        # OAuth client (for Claude Max/Pro subscription — bypasses litellm)
+        # Auth mode: OAuth (subscription) takes priority over API key
         self._oauth: Optional[AnthropicOAuth] = None
         if self.config.provider == "anthropic" and is_oauth_available():
             self._oauth = AnthropicOAuth()
-            logger.info("OAuth: enabled (bypassing litellm for Anthropic calls)")
+            has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+            if has_api_key:
+                logger.info("Auth: OAuth token AND API key both present — using OAuth (subscription)")
+            else:
+                logger.info("Auth: using OAuth token (Claude Max/Pro subscription)")
+        elif self.config.provider == "anthropic":
+            logger.info("Auth: using Anthropic API key")
         
         logger.info(f"AsyncLLMClient initialized with model {self.config.model}")
     
