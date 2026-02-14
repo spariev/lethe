@@ -17,6 +17,7 @@ from litellm import acompletion, completion
 
 from lethe.utils import strip_model_tags
 from lethe.memory.anthropic_oauth import AnthropicOAuth, is_oauth_available
+from lethe.memory.codex_oauth import CodexOAuth, is_codex_oauth_available
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,12 @@ PROVIDERS = {
         "model_prefix": "",  # litellm auto-detects gpt models
         "default_model": "gpt-5.2",
         "default_model_aux": "gpt-5.2-mini",
+    },
+    "codex": {
+        "env_key": "",  # no API key needed - uses OAuth tokens
+        "model_prefix": "",
+        "default_model": "gpt-5.2",
+        "default_model_aux": "codex-mini-latest",
     },
 }
 
@@ -152,10 +159,13 @@ class LLMConfig:
                 self.model_aux = prefix + self.model_aux
         
         # Verify API key exists (ANTHROPIC_AUTH_TOKEN is an alternative for Anthropic)
+        # Codex provider uses OAuth tokens, no API key needed
         env_key = provider_config.get("env_key")
         if env_key and not os.environ.get(env_key):
             if self.provider == "anthropic" and os.environ.get("ANTHROPIC_AUTH_TOKEN"):
                 pass  # Bearer auth via ANTHROPIC_AUTH_TOKEN
+            elif self.provider == "codex":
+                pass  # OAuth tokens, no API key
             else:
                 raise ValueError(f"{env_key} not set")
         
@@ -179,7 +189,12 @@ class LLMConfig:
         if os.environ.get("ANTHROPIC_AUTH_TOKEN"):
             logger.info("Auto-detected provider: anthropic (via ANTHROPIC_AUTH_TOKEN)")
             return "anthropic"
-        
+
+        # Codex OAuth tokens
+        if is_codex_oauth_available():
+            logger.info("Auto-detected provider: codex (via OAuth tokens)")
+            return "codex"
+
         # Default
         return DEFAULT_PROVIDER
     
@@ -828,7 +843,20 @@ class AsyncLLMClient:
                 logger.info("Auth: using OAuth token (Claude Max/Pro subscription)")
         elif self.config.provider == "anthropic":
             logger.info("Auth: using Anthropic API key")
-        
+
+        # Codex OAuth (ChatGPT subscription — bypasses litellm)
+        self._codex_oauth: Optional[CodexOAuth] = None
+        if self.config.provider == "codex":
+            if is_codex_oauth_available():
+                self._codex_oauth = CodexOAuth()
+                logger.info("Auth: using Codex OAuth token (ChatGPT subscription)")
+            else:
+                raise ValueError(
+                    "LLM_PROVIDER=codex requires OAuth tokens. "
+                    "Run 'uv run lethe codex-login' to authenticate, "
+                    "or set CODEX_AUTH_TOKEN in env."
+                )
+
         logger.info(f"AsyncLLMClient initialized with model {self.config.model}")
     
     # Tool results that should NOT be persisted to message history
@@ -1232,6 +1260,10 @@ class AsyncLLMClient:
         # OAuth path: route through direct Anthropic API
         if self._oauth:
             return await self._call_with_retry_oauth(kwargs, log_type, max_retries)
+
+        # Codex OAuth path: route through Codex Responses API
+        if self._codex_oauth:
+            return await self._call_with_retry_codex(kwargs, log_type, max_retries)
         
         last_error = None
         for attempt in range(max_retries):
@@ -1308,7 +1340,49 @@ class AsyncLLMClient:
         
         logger.error(f"OAuth call failed after {max_retries} attempts: {last_error}")
         raise last_error
-    
+
+    async def _call_with_retry_codex(self, kwargs: Dict, log_type: str, max_retries: int = 5) -> Dict:
+        """Route any litellm-style kwargs through Codex OAuth instead."""
+        import asyncio
+
+        messages = kwargs.get("messages", [])
+        tools = kwargs.get("tools")
+        model = kwargs.get("model", self.config.model)
+
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                result = await self._codex_oauth.call_responses(
+                    messages=messages,
+                    tools=tools if tools else None,
+                    model=model,
+                )
+                _log_llm_interaction(kwargs, result, f"{log_type}_codex")
+                return result
+            except Exception as e:
+                last_error = e
+                error_str = str(e).lower()
+
+                is_rate_limit = any(x in error_str for x in [
+                    "rate_limit", "rate limit", "429", "too many requests",
+                    "usage_limit", "usage limit",
+                ])
+                is_transient = any(x in error_str for x in ["timeout", "overloaded", "503", "502", "500"])
+
+                if is_rate_limit:
+                    wait_time = min(60, 15 * (attempt + 1))
+                    logger.warning(f"Codex rate limit (attempt {attempt + 1}/{max_retries}), waiting {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                elif is_transient:
+                    wait_time = (attempt + 1) * 2
+                    logger.warning(f"Codex transient error (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s: {e}")
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise
+
+        logger.error(f"Codex call failed after {max_retries} attempts: {last_error}")
+        raise last_error
+
     async def _call_api(self) -> Dict:
         """Make API call via litellm (or OAuth if enabled)."""
         # Pre-flight: force compaction if context is too large
