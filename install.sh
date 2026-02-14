@@ -45,26 +45,31 @@ declare -A PROVIDERS=(
     ["openrouter"]="OpenRouter (recommended - access to all models)"
     ["anthropic"]="Anthropic API (Claude models with API key)"
     ["openai"]="OpenAI (GPT models)"
+    ["codex"]="OpenAI Codex (ChatGPT Plus/Pro subscription, no API key - uses OAuth)"
 )
 declare -A PROVIDER_KEYS=(
     ["openrouter"]="OPENROUTER_API_KEY"
     ["anthropic"]="ANTHROPIC_API_KEY"
     ["openai"]="OPENAI_API_KEY"
+    ["codex"]=""
 )
 declare -A PROVIDER_MODELS=(
     ["openrouter"]="openrouter/moonshotai/kimi-k2.5-0127"
     ["anthropic"]="claude-opus-4-5-20251101"
     ["openai"]="gpt-5.2"
+    ["codex"]="gpt-5.2"
 )
 declare -A PROVIDER_MODELS_AUX=(
     ["openrouter"]="openrouter/moonshotai/kimi-k2.5-0127"
     ["anthropic"]="claude-haiku-4-5-20251001"
     ["openai"]="gpt-5.2-mini"
+    ["codex"]="codex-mini-latest"
 )
 declare -A PROVIDER_URLS=(
     ["openrouter"]="https://openrouter.ai/keys"
     ["anthropic"]="https://console.anthropic.com/settings/keys"
     ["openai"]="https://platform.openai.com/api-keys"
+    ["codex"]="https://chatgpt.com"
 )
 
 print_header() {
@@ -122,7 +127,10 @@ detect_api_keys() {
     if [ -n "${OPENAI_API_KEY:-}" ]; then
         DETECTED_PROVIDERS+=("openai")
     fi
-    
+    if [ -n "${CODEX_AUTH_TOKEN:-}" ] || [ -f "$HOME/.lethe/codex_tokens.json" ]; then
+        DETECTED_PROVIDERS+=("codex")
+    fi
+
     # Also check .env file if it exists
     if [ -f "$CONFIG_DIR/.env" ]; then
         source "$CONFIG_DIR/.env" 2>/dev/null || true
@@ -150,7 +158,7 @@ prompt_provider() {
     fi
     
     local i=1
-    for provider in openrouter anthropic openai; do
+    for provider in openrouter anthropic openai codex; do
         local desc="${PROVIDERS[$provider]}"
         local detected=""
         if [[ " ${DETECTED_PROVIDERS[*]} " =~ " $provider " ]]; then
@@ -160,21 +168,22 @@ prompt_provider() {
         ((i++))
     done
     echo ""
-    
+
     local default_choice=1
     if [[ " ${DETECTED_PROVIDERS[*]} " =~ " anthropic " ]]; then
         default_choice=2
     elif [[ " ${DETECTED_PROVIDERS[*]} " =~ " openai " ]]; then
         default_choice=3
     fi
-    
-    read -p "Choose provider [1-3, default=$default_choice]: " choice < /dev/tty
+
+    read -p "Choose provider [1-4, default=$default_choice]: " choice < /dev/tty
     choice=${choice:-$default_choice}
-    
+
     case $choice in
         1) SELECTED_PROVIDER="openrouter" ;;
         2) SELECTED_PROVIDER="anthropic" ;;
         3) SELECTED_PROVIDER="openai" ;;
+        4) SELECTED_PROVIDER="codex" ;;
         *) SELECTED_PROVIDER="openrouter" ;;
     esac
     
@@ -225,9 +234,15 @@ prompt_model() {
 }
 
 prompt_api_key() {
+    # Codex uses OAuth, no API key needed
+    if [[ "$SELECTED_PROVIDER" == "codex" ]]; then
+        API_KEY=""
+        return
+    fi
+
     local key_name="${PROVIDER_KEYS[$SELECTED_PROVIDER]}"
     local key_url="${PROVIDER_URLS[$SELECTED_PROVIDER]}"
-    
+
     # Check if already have key in environment or existing config
     local existing_key=""
     local key_source=""
@@ -865,6 +880,14 @@ main() {
         echo "  Model: $SELECTED_MODEL (aux: $SELECTED_MODEL_AUX)"
         echo "  Workspace: $WORKSPACE_DIR (agent can only access this directory)"
         echo ""
+        if [[ "$SELECTED_PROVIDER" == "codex" ]]; then
+            echo -e "  ${YELLOW}══════════════════════════════════════════════════════════${NC}"
+            echo -e "  ${YELLOW}Codex OAuth Setup Required:${NC}"
+            echo "    Run: uv run lethe codex-login"
+            echo "    This will open your browser to authenticate with your ChatGPT account."
+            echo -e "  ${YELLOW}══════════════════════════════════════════════════════════${NC}"
+            echo ""
+        fi
         echo "  Message your bot on Telegram to get started!"
         echo ""
         echo "  Useful commands:"
@@ -888,6 +911,14 @@ main() {
         echo "  Model: $SELECTED_MODEL (aux: $SELECTED_MODEL_AUX)"
         echo -e "  ${YELLOW}WARNING: Agent has full system access${NC}"
         echo ""
+        if [[ "$SELECTED_PROVIDER" == "codex" ]]; then
+            echo -e "  ${YELLOW}══════════════════════════════════════════════════════════${NC}"
+            echo -e "  ${YELLOW}Codex OAuth Setup Required:${NC}"
+            echo "    Run: uv run lethe codex-login"
+            echo "    This will open your browser to authenticate with your ChatGPT account."
+            echo -e "  ${YELLOW}══════════════════════════════════════════════════════════${NC}"
+            echo ""
+        fi
         echo "  Message your bot on Telegram to get started!"
         echo ""
         echo "  Useful commands:"
