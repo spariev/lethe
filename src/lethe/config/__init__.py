@@ -49,7 +49,7 @@ class Settings(BaseSettings):
         description="Custom API base URL for local/compatible providers (empty = use provider default)",
     )
     llm_context_limit: int = Field(
-        default=40000,
+        default=100000,
         description="Context window size in tokens",
     )
     llm_messages_load: int = Field(

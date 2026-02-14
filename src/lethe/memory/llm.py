@@ -394,24 +394,24 @@ class ContextWindow:
         keep_from = min(keep_from, len(self.messages) - 2)
         
         # Adjust cutoff to a clean boundary: must not split tool_call/tool_result pairs.
-        # Walk backward to find an assistant message WITHOUT tool_calls, or a tool result
-        # that completes its group (next message is not role=tool).
+        # A safe cutoff is a position where:
+        # - The message BEFORE cutoff is NOT an assistant with tool_calls (would orphan results)
+        # - The message AT cutoff is NOT a tool result (would orphan from its assistant)
         cutoff = keep_from
         while cutoff > 0 and cutoff < len(self.messages):
-            prev = self.messages[cutoff - 1]
-            curr = self.messages[cutoff] if cutoff < len(self.messages) else None
+            msg_at = self.messages[cutoff]
+            msg_before = self.messages[cutoff - 1]
             
-            # Safe to cut after a user message (clean conversation boundary)
-            if prev.role == "user":
-                break
-            # Safe to cut after an assistant message that has NO tool_calls
-            if prev.role == "assistant" and not prev.tool_calls:
-                break
-            # Safe to cut after a tool result if the next message is NOT a tool result
-            # (meaning the tool group is complete)
-            if prev.role == "tool" and (curr is None or curr.role != "tool"):
-                break
-            cutoff -= 1
+            # NOT safe: cutting right after an assistant with tool_calls (results follow)
+            if msg_before.role == "assistant" and msg_before.tool_calls:
+                cutoff -= 1
+                continue
+            # NOT safe: cutting where a tool result would be separated from its assistant
+            if msg_at.role == "tool":
+                cutoff -= 1
+                continue
+            # Safe: clean boundary (user msg, plain assistant, etc.)
+            break
         
         if cutoff <= 0:
             cutoff = keep_from  # Fallback if no clean boundary found
