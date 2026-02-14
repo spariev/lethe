@@ -132,9 +132,13 @@ Mirrors `AnthropicOAuth`:
       "usage": {"prompt_tokens": ..., "completion_tokens": ..., "total_tokens": ...},
   }
   ```
+- `_normalize_model(model)` — normalize model names:
+  - Strip litellm provider prefixes like `openai/...`, `openrouter/...` (mirror upstream fix `89849cf`)
+
 - `call_responses(messages, tools, model, max_tokens)` — main API call:
   1. `await self.ensure_access()`
-  2. Normalize messages, tools
+  2. Normalize model, messages, tools
+     - **Guard against empty input** after normalization (mirror upstream fix `e210524`)
   3. Build request body with `store: false`, `stream: false`
   4. POST to `{CODEX_BASE_URL}{CODEX_RESPONSES_PATH}`
   5. Parse and return litellm-compatible response
@@ -166,29 +170,55 @@ def is_codex_oauth_available() -> bool:
   4. Exchange code for tokens
   5. Save to `~/.lethe/codex_tokens.json`
 
-### 3. MODIFY: `src/lethe/memory/llm.py` — Route Codex Through OAuth
+### 3. MODIFY: `src/lethe/memory/llm.py` — Route Codex Through OAuth (apply upstream decisions)
 
-Follow the exact same diff pattern as upstream commit:
+Follow the same pattern as the upstream Anthropic OAuth fixes, especially:
+- `14dad51`: **OAuth takes priority over API key**, and log which auth mode is used.
+- `209791b`: **Route ALL calls through OAuth when active** (including no-tools calls).
+
+Implementation details:
 
 - **Import**: `from lethe.memory.codex_oauth import CodexOAuth, is_codex_oauth_available`
-- **`AsyncLLMClient.__init__`**: After the existing Anthropic OAuth check, add:
+
+- **`AsyncLLMClient.__init__`**:
+
+  Add a codex OAuth client when configured.
+
+  Auth precedence rule (match upstream):
+  - If Codex OAuth tokens are present → **use Codex OAuth even if `OPENAI_API_KEY` is also set**.
+  - Else fall back to standard OpenAI API key (litellm) path.
+
+  Example logic:
   ```python
-  # Codex OAuth (ChatGPT Plus/Pro subscription — bypasses litellm)
-  if not self._oauth and self.config.provider == "openai" and is_codex_oauth_available():
+  # Codex OAuth (ChatGPT subscription — bypasses litellm)
+  self._codex_oauth: Optional[CodexOAuth] = None
+  if self.config.provider == "openai" and is_codex_oauth_available():
       self._codex_oauth = CodexOAuth()
-      logger.info("Codex OAuth: enabled (bypassing litellm for OpenAI Codex calls)")
+      has_api_key = bool(os.environ.get("OPENAI_API_KEY"))
+      if has_api_key:
+          logger.info("Auth: Codex OAuth token AND OPENAI_API_KEY both present — using OAuth (subscription)")
+      else:
+          logger.info("Auth: using Codex OAuth token (ChatGPT subscription)")
+  elif self.config.provider == "openai":
+      logger.info("Auth: using OpenAI API key")
   ```
-- **`_call_api()`**: After the existing `if self._oauth:` block, add:
-  ```python
-  if self._codex_oauth:
-      return await self._call_api_codex(messages, self.tools)
-  ```
-- **New `_call_api_codex()` method**: Same structure as `_call_api_oauth()` —
-  delegates to `self._codex_oauth.call_responses()`, handles debug logging,
-  tracks usage
-- **`_call_api_no_tools()`**: Add codex path (same as OAuth path pattern)
-- **`LLMConfig.__post_init__()`**: When `is_codex_oauth_available()` and
-  provider is `"openai"`, skip the API key requirement check
+
+- **Routing:**
+  - `_call_api()` must route through Codex OAuth whenever `self._codex_oauth` is set.
+  - `_call_api_no_tools()` must ALSO route through Codex OAuth whenever `self._codex_oauth` is set.
+
+  Do **not** mix modes within a single session.
+
+- **New `_call_api_codex()` method**:
+  Same structure as `_call_with_retry_oauth()` in upstream:
+  - delegates to `self._codex_oauth.call_responses(...)`
+  - debug logging
+  - retries for 429/5xx
+  - tracks usage
+
+- **`LLMConfig.__post_init__()` / config validation**:
+  When Codex OAuth is available and provider is `"openai"`, skip the OpenAI API key requirement check.
+  (Match upstream: OAuth is a complete alternative auth mode.)
 
 ### 4. MODIFY: `src/lethe/main.py` — Add `codex-login` Subcommand
 
@@ -204,18 +234,22 @@ if args.command == "codex-login":
 
 ### 5. MODIFY: `install.sh` — Add Codex Provider Option
 
+Keep the user-facing install option as `codex`, but apply upstream auth precedence (`14dad51`) and avoid ambiguous mixed modes.
+
 - Add `"codex"` to PROVIDERS array:
   ```bash
-  ["codex"]="OpenAI Codex (ChatGPT Plus/Pro, no API key - uses OAuth)"
+  ["codex"]="OpenAI Codex (ChatGPT subscription, no API key - uses OAuth)"
   ```
 - Add to PROVIDER_MODELS / PROVIDER_MODELS_AUX:
   ```bash
-  ["codex"]="gpt-5.2" / "codex-mini-latest"
+  ["codex"]="gpt-5.2" / "codex-mini-latest"  # validate actual IDs during spike
   ```
 - Add to PROVIDER_KEYS with empty value (no API key needed)
 - Skip `prompt_api_key()` when `SELECTED_PROVIDER=codex`
 - After install, print instructions: `Run 'uv run lethe codex-login' to authenticate`
-- Set `LLM_PROVIDER=openai` in .env (codex uses the openai provider with OAuth)
+- **Config suggestion:** either:
+  - set `LLM_PROVIDER=codex` (preferred; explicit mode), OR
+  - set `LLM_PROVIDER=openai` but ensure runtime selection prefers OAuth tokens when present.
 
 ### 6. MODIFY: `.env.example` — Document Codex Option
 
@@ -243,9 +277,11 @@ endpoints, different auth headers, different tool name mappings. Keeping them
 separate follows the upstream pattern and avoids coupling.
 
 ### How does the Codex provider interact with the existing `"openai"` provider?
-- `LLM_PROVIDER=openai` with `OPENAI_API_KEY` set → standard litellm path (unchanged)
-- `LLM_PROVIDER=openai` with `CODEX_AUTH_TOKEN` or `codex_tokens.json` → Codex OAuth path
-- The detection is in `AsyncLLMClient.__init__`, same pattern as Anthropic OAuth
+Apply upstream precedence decision (`14dad51`): **OAuth (subscription) takes priority over API key**.
+
+- `LLM_PROVIDER=openai` with `CODEX_AUTH_TOKEN` or `codex_tokens.json` → Codex OAuth path (bypasses litellm)
+- `LLM_PROVIDER=openai` with only `OPENAI_API_KEY` set → standard litellm path (unchanged)
+- If both OAuth tokens and `OPENAI_API_KEY` are present → **use OAuth** and log which auth mode is used
 
 ### Token lifecycle
 Same as upstream Anthropic pattern:
