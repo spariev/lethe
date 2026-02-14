@@ -28,6 +28,10 @@ Thumbs.db
 
 # Logs
 *.log
+*.bak
+
+# Config backup artifacts
+config/blocks/*.pre-actors.*.bak
 
 # Build
 dist/
