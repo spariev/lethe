@@ -300,9 +300,11 @@ a code for the user to copy. Provides `run_codex_login()`:
 
 ### 3. MODIFY: `src/lethe/memory/llm.py` — Route Codex Through OAuth
 
-Use `codex` as a **distinct provider** (not overloading `openai`). This avoids
-ambiguity when a user has both `OPENAI_API_KEY` and Codex tokens, and makes the
-config explicit.
+Support **both** activation modes:
+
+1) `LLM_PROVIDER=codex` (explicit provider; OAuth-only)
+2) `LLM_PROVIDER=openai` **with Codex OAuth tokens present** (`CODEX_AUTH_TOKEN` or `~/.lethe/codex_tokens.json`)
+   - Apply upstream precedence (`14dad51`): **OAuth (subscription) takes priority over `OPENAI_API_KEY`**.
 
 Follow the same routing patterns as the upstream Anthropic OAuth fixes:
 - `14dad51`: log which auth mode is used.
