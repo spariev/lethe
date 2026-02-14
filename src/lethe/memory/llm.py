@@ -159,13 +159,16 @@ class LLMConfig:
                 self.model_aux = prefix + self.model_aux
         
         # Verify API key exists (ANTHROPIC_AUTH_TOKEN is an alternative for Anthropic)
-        # Codex provider uses OAuth tokens, no API key needed
+        # Codex provider uses OAuth tokens, no API key needed.
+        # OpenAI provider can also use Codex OAuth tokens (subscription) when available.
         env_key = provider_config.get("env_key")
         if env_key and not os.environ.get(env_key):
             if self.provider == "anthropic" and os.environ.get("ANTHROPIC_AUTH_TOKEN"):
                 pass  # Bearer auth via ANTHROPIC_AUTH_TOKEN
             elif self.provider == "codex":
                 pass  # OAuth tokens, no API key
+            elif self.provider == "openai" and is_codex_oauth_available():
+                pass  # Codex OAuth tokens available, no API key required
             else:
                 raise ValueError(f"{env_key} not set")
         
@@ -845,17 +848,25 @@ class AsyncLLMClient:
             logger.info("Auth: using Anthropic API key")
 
         # Codex OAuth (ChatGPT subscription — bypasses litellm)
+        # Support both:
+        # - provider=codex (explicit)
+        # - provider=openai with Codex OAuth tokens present (takes priority over OPENAI_API_KEY)
         self._codex_oauth: Optional[CodexOAuth] = None
-        if self.config.provider == "codex":
-            if is_codex_oauth_available():
-                self._codex_oauth = CodexOAuth()
-                logger.info("Auth: using Codex OAuth token (ChatGPT subscription)")
+
+        if self.config.provider == "codex" and not is_codex_oauth_available():
+            raise ValueError(
+                "LLM_PROVIDER=codex requires OAuth tokens. "
+                "Run 'uv run lethe codex-login' to authenticate, "
+                "or set CODEX_AUTH_TOKEN in env."
+            )
+
+        if self.config.provider in ("codex", "openai") and is_codex_oauth_available():
+            self._codex_oauth = CodexOAuth()
+            has_api_key = bool(os.environ.get("OPENAI_API_KEY"))
+            if self.config.provider == "openai" and has_api_key:
+                logger.info("Auth: Codex OAuth token AND OPENAI_API_KEY both present — using OAuth (subscription)")
             else:
-                raise ValueError(
-                    "LLM_PROVIDER=codex requires OAuth tokens. "
-                    "Run 'uv run lethe codex-login' to authenticate, "
-                    "or set CODEX_AUTH_TOKEN in env."
-                )
+                logger.info("Auth: using Codex OAuth token (ChatGPT subscription)")
 
         logger.info(f"AsyncLLMClient initialized with model {self.config.model}")
     
