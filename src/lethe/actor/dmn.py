@@ -16,6 +16,7 @@ Uses aggressive prompt caching — its system prompt is stable.
 import asyncio
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from typing import Callable, Awaitable, Optional
 
@@ -31,6 +32,11 @@ WORKSPACE_DIR = os.environ.get("WORKSPACE_DIR", os.path.expanduser("~/lethe"))
 
 # State file — persists between rounds
 DMN_STATE_FILE = os.path.join(WORKSPACE_DIR, "dmn_state.md")
+IDEAS_FILE = os.path.join(WORKSPACE_DIR, "ideas.md")
+QUESTIONS_FILE = os.path.join(WORKSPACE_DIR, "questions.md")
+DMN_RESET_MARKER = os.path.join(WORKSPACE_DIR, ".dmn_state_reset_v1")
+FORCE_DEEP_EVERY_N_ROUNDS = 8
+IDEAS_STALE_HOURS = 6
 
 DMN_SYSTEM_PROMPT_TEMPLATE = """You are the Default Mode Network (DMN) — a persistent background thinking process.
 
@@ -38,8 +44,7 @@ You run in rounds, triggered periodically (every 15 minutes). Between rounds, yo
 your state to a file. Each round, you read your previous state and continue thinking.
 
 <principal>
-Your principal is Alexander, based in Geneva. You work to advance his goals across wealth,
-health, well-being, and relationships. You know him well — check memory blocks for current context.
+{principal_context}
 </principal>
 
 <workspace>
@@ -135,17 +140,23 @@ Each round:
 </rules>"""
 
 
-def get_dmn_system_prompt() -> str:
+def get_dmn_system_prompt(principal_context: str = "") -> str:
     """Build DMN system prompt with resolved workspace paths."""
+    principal = principal_context.strip() or (
+        "You work to advance your principal's goals across projects, well-being, "
+        "relationships, and long-term outcomes. Use memory blocks for current context."
+    )
     return DMN_SYSTEM_PROMPT_TEMPLATE.format(
         workspace=WORKSPACE_DIR,
         home=os.path.expanduser("~"),
+        principal_context=principal,
     )
 
 DMN_ROUND_MESSAGE = """[DMN Round - {timestamp}]
 
 {reminders}
 {previous_state}
+{mode_directive}
 
 Begin your round. Read state, check tasks, reflect, take action, update state.
 When done, call terminate(result) with a summary."""
@@ -170,6 +181,7 @@ class DefaultModeNetwork:
         cortex_id: str,
         send_to_user: Callable[[str], Awaitable[None]],
         get_reminders: Optional[Callable[[], Awaitable[str]]] = None,
+        principal_context_provider: Optional[Callable[[], str]] = None,
     ):
         self.registry = registry
         self.llm_factory = llm_factory
@@ -177,6 +189,7 @@ class DefaultModeNetwork:
         self.cortex_id = cortex_id
         self.send_to_user = send_to_user
         self.get_reminders = get_reminders
+        self.principal_context_provider = principal_context_provider
         self._current_actor: Optional[Actor] = None
 
     @staticmethod
@@ -222,6 +235,39 @@ class DefaultModeNetwork:
                         previous_state = f"Previous round state:\n{content}\n"
         except Exception as e:
             logger.warning(f"DMN: failed to read state: {e}")
+
+        # One-time reset if DMN state appears stale/self-referential.
+        reset_reason = self._stale_state_reason(previous_state)
+        if reset_reason:
+            reset_body = (
+                "# DMN State — Reset Baseline\n"
+                f"*Reset at: {timestamp}*\n\n"
+                "## Why reset happened\n"
+                f"- {reset_reason}\n\n"
+                "## Next focus\n"
+                "- Re-anchor to current memory blocks and active project files\n"
+                "- Produce at least one concrete idea in ideas.md\n"
+                "- Update questions.md only if there is a novel pattern\n"
+            )
+            try:
+                with open(DMN_STATE_FILE, "w") as f:
+                    f.write(reset_body)
+                with open(DMN_RESET_MARKER, "w") as f:
+                    f.write(timestamp)
+                previous_state = f"Previous round state:\n{reset_body}\n"
+                logger.warning(f"DMN: state reset triggered ({reset_reason})")
+            except Exception as e:
+                logger.warning(f"DMN: failed to write reset state: {e}")
+
+        force_deep, force_reason = self._should_force_deep(previous_state)
+        mode_directive = (
+            f"[MODE DIRECTIVE] FORCE DEEP MODE THIS ROUND. Reason: {force_reason}. "
+            f"Write at least one idea entry to {IDEAS_FILE} and summarize why it matters."
+            if force_deep else
+            "[MODE DIRECTIVE] Choose QUICK vs DEEP normally based on detected opportunities."
+        )
+
+        file_stats_before = self._snapshot_files()
         
         # Create the DMN actor for this round
         config = ActorConfig(
@@ -258,6 +304,7 @@ class DefaultModeNetwork:
             timestamp=timestamp,
             reminders=reminders_text,
             previous_state=previous_state,
+            mode_directive=mode_directive,
         )
         
         # Periodic cleanup: remove actors terminated > 1 hour ago
@@ -320,6 +367,17 @@ class DefaultModeNetwork:
                 actor.terminate(f"Error: {e}")
         
         result = actor._result or "No result"
+        file_stats_after = self._snapshot_files()
+        mode = "DEEP" if "DEEP" in result.upper() or actor._turns > 4 else "QUICK"
+        touched = self._diff_file_stats(file_stats_before, file_stats_after)
+        logger.info(
+            "DMN telemetry: mode=%s turns=%s forced=%s reason=%s touched=%s",
+            mode,
+            actor._turns,
+            force_deep,
+            force_reason or "none",
+            touched or "none",
+        )
         logger.info(f"DMN round complete: {result[:100]}")
         
         # Clean up
@@ -344,9 +402,78 @@ class DefaultModeNetwork:
         config.context_limit = min(config.context_limit, 64000)
         config.max_output_tokens = min(config.max_output_tokens, 4096)
         
+        principal_context = ""
+        if self.principal_context_provider:
+            try:
+                principal_context = self.principal_context_provider() or ""
+            except Exception as e:
+                logger.warning(f"DMN: failed to get principal context: {e}")
+
         client = AsyncLLMClient(
             config=config,
-            system_prompt=get_dmn_system_prompt(),
+            system_prompt=get_dmn_system_prompt(principal_context=principal_context),
         )
         
         return client
+
+    def _extract_round_number(self, previous_state: str) -> int:
+        if not previous_state:
+            return 0
+        match = re.search(r"Round\s+(\d+)", previous_state)
+        if not match:
+            return 0
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return 0
+
+    def _should_force_deep(self, previous_state: str) -> tuple[bool, str]:
+        last_round = self._extract_round_number(previous_state)
+        if last_round and last_round % FORCE_DEEP_EVERY_N_ROUNDS == 0:
+            return True, f"periodic deep cadence (every {FORCE_DEEP_EVERY_N_ROUNDS} rounds)"
+
+        try:
+            if os.path.exists(IDEAS_FILE):
+                age_seconds = datetime.now(timezone.utc).timestamp() - os.path.getmtime(IDEAS_FILE)
+                if age_seconds > IDEAS_STALE_HOURS * 3600:
+                    hours = int(age_seconds // 3600)
+                    return True, f"ideas.md stale for {hours}h"
+        except Exception:
+            pass
+        return False, ""
+
+    def _stale_state_reason(self, previous_state: str) -> str:
+        if not previous_state:
+            return ""
+        if os.path.exists(DMN_RESET_MARKER):
+            return ""
+        stale_markers = ("Valentine", "no changes", "all stable")
+        marker_hits = sum(1 for marker in stale_markers if marker.lower() in previous_state.lower())
+        quick_hits = previous_state.lower().count("quick check")
+        if marker_hits >= 2 or quick_hits >= 4:
+            return "state appears repetitive/stale and anchored to old context"
+        return ""
+
+    def _snapshot_files(self) -> dict:
+        snapshot = {}
+        for path in (DMN_STATE_FILE, IDEAS_FILE, QUESTIONS_FILE):
+            try:
+                if os.path.exists(path):
+                    snapshot[path] = {
+                        "mtime": os.path.getmtime(path),
+                        "size": os.path.getsize(path),
+                    }
+                else:
+                    snapshot[path] = {"mtime": 0, "size": 0}
+            except Exception:
+                snapshot[path] = {"mtime": 0, "size": 0}
+        return snapshot
+
+    def _diff_file_stats(self, before: dict, after: dict) -> str:
+        changed = []
+        for path, info_after in after.items():
+            info_before = before.get(path, {"mtime": 0, "size": 0})
+            if info_after["mtime"] != info_before["mtime"] or info_after["size"] != info_before["size"]:
+                base = os.path.basename(path)
+                changed.append(f"{base}({info_before['size']}->{info_after['size']} bytes)")
+        return ", ".join(changed)

@@ -69,6 +69,35 @@ class ActorSystem:
         self._send_to_user: Optional[Callable] = None
         self._get_reminders: Optional[Callable] = None
 
+    def _get_principal_context(self) -> str:
+        """Build principal context for DMN from live memory blocks."""
+        try:
+            blocks = getattr(self.agent, "memory", None).blocks
+            identity = blocks.get("identity") or {}
+            human = blocks.get("human") or {}
+            project = blocks.get("project") or {}
+
+            def _extract(value: str, max_chars: int = 900) -> str:
+                text = (value or "").strip()
+                return text[:max_chars]
+
+            parts = []
+            if identity.get("value"):
+                parts.append(f"Identity snapshot:\n{_extract(identity.get('value', ''))}")
+            if human.get("value"):
+                parts.append(f"Human context:\n{_extract(human.get('value', ''))}")
+            if project.get("value"):
+                parts.append(f"Project context:\n{_extract(project.get('value', ''))}")
+            if not parts:
+                return (
+                    "Advance your principal's goals with current memory context. "
+                    "If context is missing, prioritize building fresh actionable context."
+                )
+            return "\n\n".join(parts)
+        except Exception as e:
+            logger.warning(f"Failed to build principal context for DMN: {e}")
+            return "Advance your principal's goals based on current memory and recent activity."
+
     async def setup(self):
         """Set up the actor system.
         
@@ -130,6 +159,7 @@ class ActorSystem:
             cortex_id=self.principal.id,
             send_to_user=self._send_to_user or (lambda msg: asyncio.sleep(0)),
             get_reminders=self._get_reminders,
+            principal_context_provider=self._get_principal_context,
         )
         
         tool_count = len(self.agent.llm._tools)
