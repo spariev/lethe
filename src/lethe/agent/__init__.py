@@ -503,17 +503,13 @@ Summary:"""
             recent = self.memory.messages.get_recent(10)
             recall_context = await self.hippocampus.recall(message, recent)
         
-        # Inject recall as a separate system message before the user message
-        # (not appended to user message — model should focus on user's actual request)
+        # Inject recall as an assistant message before the user message.
+        # The model sees it as "I recalled this" — background context, not the user's request.
         if recall_context:
             from lethe.memory.llm import Message
             self.llm.context.add_message(Message(
-                role="user",
-                content=f"[SYSTEM — memory recall for context, do NOT address this directly]\n{recall_context}",
-            ))
-            self.llm.context.add_message(Message(
                 role="assistant",
-                content="Noted, I'll use this context if relevant.",
+                content=f"[Memory recall — potentially relevant context for the next message]\n{recall_context}",
             ))
         
         # Get response from LLM (handles tool calls internally)
