@@ -198,10 +198,12 @@ def telegram_send_message(
     text: str,
     parse_mode: str = "",
 ) -> str:
-    """Send a text message to the current Telegram chat.
+    """Send an EXTRA message to the user during a long task.
     
-    Use this to send multiple separate messages instead of one long response.
-    Each call sends immediately as a separate message bubble.
+    IMPORTANT: Your final text response is sent automatically — do NOT use this
+    for your main reply. Only use this to send updates WHILE working on a task
+    (e.g., "Starting analysis..." before a long operation).
+    Do NOT send the same content multiple times. Do NOT retry if a message sent.
     
     Args:
         text: Message text to send
