@@ -70,7 +70,7 @@ async def run():
         from lethe.actor.integration import ActorSystem
         actor_system = ActorSystem(agent, settings=settings)
         await actor_system.setup()
-        console.print("[cyan]Actor system[/cyan] initialized (cortex + DMN + Amygdala)")
+        console.print("[cyan]Actor system[/cyan] initialized (brainstem + cortex + DMN + Amygdala)")
     
     stats = agent.get_stats()
     console.print(f"[green]Agent ready[/green] - {stats['memory_blocks']} blocks, {stats['archival_memories']} memories")
@@ -199,8 +199,9 @@ async def run():
         return await agent.heartbeat(message)
     
     async def heartbeat_full_context(message: str) -> str:
-        """Full context heartbeat — also triggers background rounds."""
+        """Full context heartbeat — triggers Brainstem (2h cadence) + background rounds."""
         if actor_system:
+            await actor_system.brainstem_heartbeat(message)
             result = await actor_system.background_round()
             return result or "ok"
         return await agent.chat(message, use_hippocampus=False)

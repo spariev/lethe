@@ -88,8 +88,8 @@ class TelegramBot:
                 from lethe.actor import ActorState
                 actors = self.actor_system.registry.all_actors
                 
-                # Separate system actors (cortex, dmn, amygdala) from user-spawned
-                system_names = {"cortex", "dmn", "amygdala"}
+                # Separate system actors (cortex, brainstem, dmn, amygdala) from user-spawned
+                system_names = {"cortex", "brainstem", "dmn", "amygdala"}
                 active = [a for a in actors if a.state in (ActorState.RUNNING, ActorState.INITIALIZING, ActorState.WAITING)]
                 terminated = [a for a in actors if a.state == ActorState.TERMINATED and a.name not in system_names]
                 
@@ -105,8 +105,10 @@ class TelegramBot:
                 
                 # Subagents (non-system)
                 subagents = [a for a in active if a.name not in system_names]
+                brainstem_active = any(a.name == "brainstem" and a.state == ActorState.RUNNING for a in actors)
                 
                 lines.append(f"\nCortex: 🟢 active")
+                lines.append(f"Brainstem: {'🟢 online' if brainstem_active else '🟡 starting'}")
                 lines.append(f"DMN: {dmn_status}")
                 lines.append(f"Amygdala: {amygdala_status}")
                 

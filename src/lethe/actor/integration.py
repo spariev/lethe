@@ -21,6 +21,7 @@ from lethe.actor.tools import create_actor_tools
 from lethe.actor.runner import ActorRunner
 from lethe.actor.dmn import DefaultModeNetwork
 from lethe.actor.amygdala import Amygdala
+from lethe.actor.brainstem import Brainstem
 from lethe.config import Settings, get_settings
 from lethe.memory.llm import AsyncLLMClient, LLMConfig
 
@@ -64,6 +65,7 @@ class ActorSystem:
         self.settings = settings or get_settings()
         self.registry = ActorRegistry()
         self.principal: Optional[Actor] = None
+        self.brainstem: Optional[Brainstem] = None
         self.dmn: Optional[DefaultModeNetwork] = None
         self.amygdala: Optional[Amygdala] = None
         self._background_tasks: Dict[str, asyncio.Task] = {}
@@ -155,8 +157,8 @@ class ActorSystem:
         original_spawn = self.registry.spawn
         def spawn_and_start(*args, **kwargs):
             actor = original_spawn(*args, **kwargs)
-            # Auto-start non-principal actors, but NOT DMN/Amygdala — they manage their own loops
-            if not actor.is_principal and actor.config.name not in {"dmn", "amygdala"}:
+            # Auto-start non-principal actors, but NOT background supervisors.
+            if not actor.is_principal and actor.config.name not in {"brainstem", "dmn", "amygdala"}:
                 self._start_actor(actor)
             return actor
         self.registry.spawn = spawn_and_start
@@ -167,6 +169,14 @@ class ActorSystem:
             self.agent.llm._update_tool_budget()
             logger.info(f"Rebuilt tool reference ({len(self.agent.llm.context._tool_reference)} chars)")
         
+        # Initialize Brainstem FIRST. It supervises boot and runtime health.
+        self.brainstem = Brainstem(
+            registry=self.registry,
+            settings=self.settings,
+            cortex_id=self.principal.id,
+        )
+        await self.brainstem.startup()
+
         # Initialize DMN (Default Mode Network) — persistent background thinker
         self.dmn = DefaultModeNetwork(
             registry=self.registry,
@@ -193,7 +203,7 @@ class ActorSystem:
         logger.info(
             f"Actor system initialized. Principal: {self.principal.id}, "
             f"cortex tools: {tool_count}, subagent tools available: {available_count}, "
-            f"DMN ready, Amygdala {amygdala_state}"
+            f"Brainstem online, DMN ready, Amygdala {amygdala_state}"
         )
         self._start_principal_monitor()
 
@@ -323,7 +333,7 @@ class ActorSystem:
         # Forward explicit metadata channel with cooldown/de-dupe to avoid spam.
         if metadata.get("channel") != "user_notify":
             return
-        if sender_name not in {"dmn", "amygdala"}:
+        if sender_name not in {"brainstem", "dmn", "amygdala"}:
             return
 
         notify_text = content
@@ -401,6 +411,13 @@ class ActorSystem:
             return None
         return await self.amygdala.run_round()
 
+    async def brainstem_heartbeat(self, heartbeat_message: str = "") -> Optional[str]:
+        """Run Brainstem supervisory checks (full-context heartbeat cadence)."""
+        if self.brainstem is None:
+            return None
+        await self.brainstem.heartbeat(heartbeat_message=heartbeat_message)
+        return None
+
     async def background_round(self) -> Optional[str]:
         """Run background cognition rounds (DMN + Amygdala)."""
         dmn_result = await self.dmn_round()
@@ -441,6 +458,7 @@ class ActorSystem:
         ][-30:]
         dmn_status = self.dmn.status if self.dmn else {}
         amygdala_status = self.amygdala.status if self.amygdala else {}
+        brainstem_status = self.brainstem.status if self.brainstem else {}
         actor_last_event_at: dict[str, str] = {}
         for e in all_events:
             actor_last_event_at[e.actor_id] = e.created_at.isoformat()
@@ -485,6 +503,7 @@ class ActorSystem:
                 }
                 for e in lifecycle_events
             ],
+            "brainstem": brainstem_status,
             "dmn": dmn_status,
             "amygdala": amygdala_status,
         }

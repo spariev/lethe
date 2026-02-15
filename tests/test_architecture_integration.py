@@ -102,7 +102,12 @@ async def test_principal_monitor_keeps_done_and_failed_updates_in_cortex(monkeyp
     worker.terminate("finished result")
     await asyncio.sleep(1.2)
     send_to_user.assert_not_awaited()
-    first_msg = await principal.wait_for_reply(timeout=0.2)
+    first_msg = None
+    for _ in range(5):
+        msg = await principal.wait_for_reply(timeout=0.2)
+        if msg and msg.metadata.get("kind") == "done":
+            first_msg = msg
+            break
     assert first_msg is not None
     assert first_msg.metadata.get("channel") == "task_update"
     assert first_msg.metadata.get("kind") == "done"
@@ -114,7 +119,12 @@ async def test_principal_monitor_keeps_done_and_failed_updates_in_cortex(monkeyp
     failed.terminate("Error: boom")
     await asyncio.sleep(1.2)
     send_to_user.assert_not_awaited()
-    second_msg = await principal.wait_for_reply(timeout=0.2)
+    second_msg = None
+    for _ in range(5):
+        msg = await principal.wait_for_reply(timeout=0.2)
+        if msg and msg.metadata.get("kind") == "failed":
+            second_msg = msg
+            break
     assert second_msg is not None
     assert second_msg.metadata.get("channel") == "task_update"
     assert second_msg.metadata.get("kind") == "failed"
@@ -170,6 +180,38 @@ async def test_background_user_notify_is_throttled(monkeypatch):
     )
     await asyncio.sleep(1.2)
     assert send_to_user.await_count == 1
+
+    await actor_system.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_brainstem_starts_first_and_is_online(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("BRAINSTEM_RELEASE_CHECK_ENABLED", "false")
+
+    class DummyLLM:
+        def __init__(self):
+            self._tools = {}
+            self.tools = []
+            self.context = type("Ctx", (), {"_tool_reference": "", "_build_tool_reference": lambda self, tools: ""})()
+        def add_tool(self, func, schema=None):
+            self._tools[func.__name__] = (func, schema or {})
+        def _update_tool_budget(self):
+            return None
+
+    class DummyAgent:
+        def __init__(self):
+            self.llm = DummyLLM()
+        def add_tool(self, func):
+            self.llm.add_tool(func)
+
+    actor_system = ActorSystem(DummyAgent())
+    await actor_system.setup()
+
+    status = actor_system.status
+    assert actor_system.brainstem is not None
+    assert status.get("brainstem", {}).get("state") == "online"
+    assert any(a.get("name") == "brainstem" for a in status.get("actors", []))
 
     await actor_system.shutdown()
 

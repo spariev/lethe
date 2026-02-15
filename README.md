@@ -18,10 +18,12 @@ Lethe is a 24/7 AI assistant that you communicate with via Telegram. It remember
 ```
 User (Telegram) <-> Cortex (principal actor, user-facing)
                      │
-          ┌──────────┼──────────┐
-          ↓          ↓          ↓
-        DMN       Amygdala   Subagents
-     (background) (salience)  (task workers)
+              Brainstem (supervisor)
+                     │
+          ┌──────────┼──────────┬──────────┐
+          ↓          ↓          ↓          ↓
+        DMN       Amygdala   Subagents   Runtime
+     (background) (salience)  (task workers) health/update
           │          │          │
           └──────────┴──────────┘
                      │
@@ -41,6 +43,7 @@ Lethe uses a neuroscience-inspired actor system:
 
 | Actor | Role | Tools |
 |-------|------|-------|
+| **Brainstem** | Boot supervisor. Starts first, performs release/resource/integrity checks, receives 2h heartbeat ticks, and sends structured findings to cortex. | Registry + event bus, local integrity checks, GitHub release check, optional `update.sh` auto-update |
 | **Cortex** | Principal actor and the ONLY actor that talks to the user. Hybrid execution: handles quick local tasks directly, delegates long/parallel work. | Actor orchestration, memory, Telegram, quick CLI/file work |
 | **DMN** (Default Mode Network) | Periodic background cognition (heartbeat-driven): scans goals/reminders, updates state, writes ideas/reflections, escalates meaningful insights. | File I/O, memory, search |
 | **Amygdala** | Background salience monitor: tags emotional/urgency patterns and escalates only on meaningful urgency/repeated high-salience signals. | Conversation/memory analysis, file I/O |
@@ -280,7 +283,11 @@ Enable with `LETHE_CONSOLE=true`. Web dashboard on port 8777.
 | `MEMORY_DIR` | Memory data storage | `./data/memory` |
 | `LETHE_CONSOLE` | Enable web console | `false` |
 | `HEARTBEAT_INTERVAL` | DMN round interval (seconds) | `900` |
-| `BACKGROUND_NOTIFY_COOLDOWN_SECONDS` | Minimum interval between forwarded DMN/Amygdala user notifications | `1800` |
+| `BACKGROUND_NOTIFY_COOLDOWN_SECONDS` | Minimum interval between forwarded Brainstem/DMN/Amygdala user notifications | `1800` |
+| `BRAINSTEM_AUTO_UPDATE` | Brainstem applies `update.sh` when a newer GitHub release is detected | `true` |
+| `BRAINSTEM_RELEASE_CHECK_ENABLED` | Enable release polling from GitHub API | `true` |
+| `BRAINSTEM_NOTIFY_COOLDOWN_SECONDS` | Brainstem cooldown for repeated alerts | `21600` |
+| `BRAINSTEM_TOKENS_PER_HOUR_WARN` | Resource warning threshold (tokens/hour) | `180000` |
 
 Note: `.env` file takes precedence over shell environment variables.
 
@@ -324,10 +331,11 @@ The test suite covers:
 
 ```
 src/lethe/
-├── actor/          # Actor model (cortex, DMN, subagents)
+├── actor/          # Actor model (brainstem, cortex, DMN, subagents)
 │   ├── __init__.py # Actor, ActorRegistry, ActorConfig
 │   ├── tools.py    # Actor tools (spawn, kill, ping, send, discover)
 │   ├── runner.py   # Subagent LLM loop runner
+│   ├── brainstem.py # Bootstrap/runtime supervisor
 │   ├── dmn.py      # Default Mode Network (background thinker)
 │   └── integration.py  # Wires actors into Agent/main.py
 ├── agent/          # Agent initialization, tool registration

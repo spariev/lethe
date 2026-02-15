@@ -1,0 +1,462 @@
+"""Brainstem - supervisory actor for boot, health, and update orchestration.
+
+Brainstem starts first, performs integrity/resource/update checks, and keeps
+the system online. It receives heartbeat ticks every two hours via the actor
+integration full-context heartbeat path.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import re
+import shlex
+import shutil
+from collections import deque
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+from urllib import request
+
+from lethe import __version__
+from lethe.actor import Actor, ActorConfig, ActorRegistry, ActorState
+from lethe.config import Settings
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_RELEASE_API = "https://api.github.com/repos/atemerev/lethe/releases/latest"
+NOTIFY_COOLDOWN_SECONDS = int(os.environ.get("BRAINSTEM_NOTIFY_COOLDOWN_SECONDS", "21600"))
+RESOURCE_WARN_TOKENS_PER_HOUR = int(os.environ.get("BRAINSTEM_TOKENS_PER_HOUR_WARN", "180000"))
+RESOURCE_WARN_MEMORY_MB = int(os.environ.get("BRAINSTEM_MEMORY_MB_WARN", "1800"))
+
+
+def _is_true(name: str, default: str = "false") -> bool:
+    return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _normalize_tag(tag: str) -> str:
+    value = (tag or "").strip()
+    if value.startswith("v"):
+        value = value[1:]
+    return value
+
+
+def _parse_semver(value: str) -> tuple[int, int, int]:
+    match = re.match(r"^\s*v?(\d+)\.(\d+)\.(\d+)", value or "")
+    if not match:
+        return (0, 0, 0)
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+class Brainstem:
+    """Supervisory bootstrap/health actor."""
+
+    def __init__(
+        self,
+        registry: ActorRegistry,
+        settings: Settings,
+        cortex_id: str,
+        install_dir: Optional[str] = None,
+    ):
+        self.registry = registry
+        self.settings = settings
+        self.cortex_id = cortex_id
+        self.install_dir = Path(install_dir or os.getcwd())
+        self.release_api = os.environ.get("BRAINSTEM_RELEASE_API", DEFAULT_RELEASE_API).strip() or DEFAULT_RELEASE_API
+        self.auto_update_enabled = _is_true("BRAINSTEM_AUTO_UPDATE", "true")
+        default_release_checks = "false" if os.environ.get("PYTEST_CURRENT_TEST") else "true"
+        self.release_checks_enabled = _is_true("BRAINSTEM_RELEASE_CHECK_ENABLED", default_release_checks)
+        self.integrity_checks_enabled = _is_true("BRAINSTEM_INTEGRITY_CHECK_ENABLED", "true")
+        self.resource_checks_enabled = _is_true("BRAINSTEM_RESOURCE_CHECK_ENABLED", "true")
+
+        self._actor: Optional[Actor] = None
+        self._last_heartbeat_at: Optional[datetime] = None
+        self._last_notified: dict[str, float] = {}
+        self._seen_release_tag = ""
+        self._status: dict = {
+            "state": "idle",
+            "started_at": "",
+            "last_heartbeat_at": "",
+            "heartbeat_count": 0,
+            "auto_update_enabled": self.auto_update_enabled,
+            "release_checks_enabled": self.release_checks_enabled,
+            "current_version": "",
+            "latest_release": "",
+            "update_available": False,
+            "last_update_attempt_at": "",
+            "last_update_result": "",
+            "last_resource_snapshot": {},
+            "last_integrity": {"ok": True, "issues": [], "warnings": []},
+            "last_error": "",
+        }
+        self._history: deque[dict] = deque(maxlen=40)
+
+    @property
+    def actor(self) -> Optional[Actor]:
+        return self._actor
+
+    @property
+    def status(self) -> dict:
+        data = dict(self._status)
+        data["history"] = list(self._history)
+        return data
+
+    async def startup(self):
+        """Spawn and run initial startup checks."""
+        if self._actor is None or self._actor.state == ActorState.TERMINATED:
+            self._actor = self.registry.spawn(
+                ActorConfig(
+                    name="brainstem",
+                    group="main",
+                    goals=(
+                        "Boot and supervise Lethe runtime. Check integrity/resources/releases. "
+                        "Notify cortex only for meaningful findings."
+                    ),
+                ),
+                spawned_by=self.cortex_id,
+            )
+        self._status["state"] = "booting"
+        self._status["started_at"] = _now_iso()
+        await self._run_cycle(trigger="startup", heartbeat_message="")
+        self._status["state"] = "online"
+
+    async def heartbeat(self, heartbeat_message: str = ""):
+        """Run supervisory checks on a full-context heartbeat tick (2h cadence)."""
+        now = datetime.now(timezone.utc)
+        if self._last_heartbeat_at and (now - self._last_heartbeat_at).total_seconds() < 30:
+            return
+        self._last_heartbeat_at = now
+        self._status["last_heartbeat_at"] = now.isoformat()
+        self._status["heartbeat_count"] = int(self._status.get("heartbeat_count", 0)) + 1
+        if self._status.get("state") == "idle":
+            self._status["state"] = "online"
+        await self._run_cycle(trigger="heartbeat", heartbeat_message=heartbeat_message or "")
+
+    async def _run_cycle(self, trigger: str, heartbeat_message: str):
+        if not self._actor or self._actor.state == ActorState.TERMINATED:
+            return
+
+        findings: list[str] = []
+        notify_items: list[tuple[str, str]] = []
+        self._status["last_error"] = ""
+
+        try:
+            current_version = self._detect_current_version()
+            self._status["current_version"] = current_version
+
+            release_info = await self._check_release(current_version)
+            self._status["latest_release"] = release_info.get("latest_tag", "")
+            self._status["update_available"] = bool(release_info.get("update_available"))
+
+            if release_info.get("error"):
+                findings.append(f"release-check error: {release_info['error']}")
+            elif release_info.get("update_available"):
+                latest = release_info.get("latest_tag", "")
+                findings.append(f"new release available: {latest} (current: {current_version})")
+                notify_items.append(
+                    (
+                        f"release:{latest}",
+                        f"Brainstem detected Lethe {latest} (current {current_version}). "
+                        f"Update available.",
+                    )
+                )
+                await self._maybe_auto_update(latest_tag=latest)
+
+            if self.resource_checks_enabled:
+                resources = self._collect_resource_snapshot()
+                self._status["last_resource_snapshot"] = resources
+                if resources.get("tokens_per_hour", 0) >= RESOURCE_WARN_TOKENS_PER_HOUR:
+                    findings.append(
+                        f"high token rate: {int(resources.get('tokens_per_hour', 0))}/h"
+                    )
+                    notify_items.append(
+                        (
+                            "resource:tokens",
+                            "Brainstem warning: token usage rate is high. "
+                            "Consider throttling background activity.",
+                        )
+                    )
+                if resources.get("process_rss_mb", 0) >= RESOURCE_WARN_MEMORY_MB:
+                    findings.append(
+                        f"high memory: {int(resources.get('process_rss_mb', 0))} MB RSS"
+                    )
+                    notify_items.append(
+                        (
+                            "resource:memory",
+                            "Brainstem warning: process memory is high.",
+                        )
+                    )
+
+            if self.integrity_checks_enabled:
+                integrity = self._check_integrity(current_version=current_version)
+                self._status["last_integrity"] = integrity
+                if not integrity.get("ok", True):
+                    issues = integrity.get("issues", [])
+                    findings.append(f"integrity issues: {len(issues)}")
+                    notify_items.append(
+                        (
+                            "integrity:issues",
+                            "Brainstem detected integrity issues. "
+                            "Please check `/status` and logs.",
+                        )
+                    )
+                elif integrity.get("warnings"):
+                    findings.append(f"integrity warnings: {len(integrity['warnings'])}")
+
+            if heartbeat_message:
+                findings.append("heartbeat received")
+
+            summary = "; ".join(findings) if findings else "all checks healthy"
+            await self._send_task_update(
+                f"Brainstem {trigger}: {summary}",
+                kind=f"brainstem_{trigger}",
+            )
+            for key, message in notify_items:
+                if self._should_notify(key):
+                    await self._send_user_notify(message, kind="brainstem_alert")
+
+            self._history.append(
+                {
+                    "at": _now_iso(),
+                    "trigger": trigger,
+                    "findings": findings,
+                    "summary": summary,
+                }
+            )
+        except Exception as e:
+            self._status["last_error"] = str(e)
+            logger.warning("Brainstem cycle failed: %s", e, exc_info=True)
+            await self._send_task_update(f"Brainstem {trigger} error: {e}", kind="brainstem_error")
+
+    async def _send_task_update(self, text: str, kind: str = "brainstem"):
+        if not self._actor:
+            return
+        try:
+            await self._actor.send_to(
+                self.cortex_id,
+                text,
+                metadata={"channel": "task_update", "kind": kind},
+            )
+        except Exception as e:
+            logger.debug("Brainstem task update failed: %s", e)
+
+    async def _send_user_notify(self, text: str, kind: str = "brainstem_alert"):
+        if not self._actor:
+            return
+        try:
+            await self._actor.send_to(
+                self.cortex_id,
+                text,
+                metadata={"channel": "user_notify", "kind": kind},
+            )
+        except Exception as e:
+            logger.debug("Brainstem user notify failed: %s", e)
+
+    def _should_notify(self, key: str) -> bool:
+        now = datetime.now(timezone.utc).timestamp()
+        last = self._last_notified.get(key, 0.0)
+        if now - last < NOTIFY_COOLDOWN_SECONDS:
+            return False
+        self._last_notified[key] = now
+        return True
+
+    def _detect_current_version(self) -> str:
+        pyproject = self.install_dir / "pyproject.toml"
+        if pyproject.exists():
+            try:
+                text = pyproject.read_text(encoding="utf-8", errors="ignore")
+                m = re.search(r'^\s*version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+                if m:
+                    return m.group(1).strip()
+            except Exception:
+                pass
+        return _normalize_tag(__version__)
+
+    async def _check_release(self, current_version: str) -> dict:
+        if not self.release_checks_enabled:
+            return {"latest_tag": "", "update_available": False}
+        try:
+            latest = await asyncio.to_thread(self._fetch_latest_release_tag)
+            latest_norm = _normalize_tag(latest)
+            current_norm = _normalize_tag(current_version)
+            update_available = _parse_semver(latest_norm) > _parse_semver(current_norm)
+            return {
+                "latest_tag": latest,
+                "update_available": update_available,
+            }
+        except Exception as e:
+            return {"latest_tag": "", "update_available": False, "error": str(e)}
+
+    def _fetch_latest_release_tag(self) -> str:
+        req = request.Request(
+            self.release_api,
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "lethe-brainstem"},
+            method="GET",
+        )
+        with request.urlopen(req, timeout=3.0) as resp:
+            payload = resp.read().decode("utf-8", errors="replace")
+        data = json.loads(payload)
+        tag = str(data.get("tag_name", "")).strip()
+        if not tag:
+            raise RuntimeError("release API response missing tag_name")
+        return tag
+
+    async def _maybe_auto_update(self, latest_tag: str):
+        if not latest_tag:
+            return
+        if self._seen_release_tag == latest_tag:
+            return
+        self._seen_release_tag = latest_tag
+
+        if not self.auto_update_enabled:
+            await self._send_task_update(
+                f"Brainstem: update {latest_tag} detected but auto-update is disabled.",
+                kind="update_skipped",
+            )
+            return
+
+        script = self.install_dir / "update.sh"
+        if not script.exists():
+            await self._send_task_update(
+                f"Brainstem: update {latest_tag} detected, but update.sh is missing.",
+                kind="update_skipped",
+            )
+            return
+
+        if self._repo_dirty():
+            await self._send_task_update(
+                f"Brainstem: update {latest_tag} detected, skipped due to local uncommitted changes.",
+                kind="update_skipped",
+            )
+            return
+
+        self._status["last_update_attempt_at"] = _now_iso()
+        await self._send_task_update(
+            f"Brainstem: applying update {latest_tag} via update.sh.",
+            kind="update_start",
+        )
+        ok, output = await self._run_update_script(script)
+        result = "success" if ok else "failed"
+        self._status["last_update_result"] = f"{result}: {output[:240]}"
+        await self._send_task_update(
+            f"Brainstem: update {latest_tag} {result}. {output[:240]}",
+            kind="update_result",
+        )
+
+    async def _run_update_script(self, script_path: Path) -> tuple[bool, str]:
+        cmd = os.environ.get("BRAINSTEM_UPDATE_COMMAND", f"bash {shlex.quote(str(script_path))}")
+        parts = shlex.split(cmd)
+        if not parts:
+            return False, "empty update command"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *parts,
+                cwd=str(self.install_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=900)
+            output = (out or b"").decode("utf-8", errors="replace").strip()
+            err_text = (err or b"").decode("utf-8", errors="replace").strip()
+            merged = output or err_text or f"exit={proc.returncode}"
+            return proc.returncode == 0, merged
+        except asyncio.TimeoutError:
+            return False, "update command timed out"
+        except Exception as e:
+            return False, f"update command failed: {e}"
+
+    def _repo_dirty(self) -> bool:
+        git_dir = self.install_dir / ".git"
+        if not git_dir.exists():
+            return False
+        try:
+            import subprocess
+
+            result = subprocess.run(
+                ["git", "-C", str(self.install_dir), "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            return bool((result.stdout or "").strip())
+        except Exception:
+            return False
+
+    def _collect_resource_snapshot(self) -> dict:
+        data = {
+            "tokens_today": 0,
+            "tokens_per_hour": 0,
+            "api_calls_per_hour": 0,
+            "process_rss_mb": 0,
+            "workspace_free_gb": 0.0,
+            "auth_mode": "unknown",
+        }
+        try:
+            from lethe.console import get_state
+
+            state = get_state()
+            data["tokens_today"] = int(getattr(state, "tokens_today", 0) or 0)
+            data["tokens_per_hour"] = int(getattr(state, "tokens_per_hour", 0) or 0)
+            data["api_calls_per_hour"] = int(getattr(state, "api_calls_per_hour", 0) or 0)
+        except Exception:
+            pass
+
+        try:
+            import resource
+
+            rss_kb = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss or 0)
+            if rss_kb > 0:
+                # Linux ru_maxrss is kilobytes.
+                data["process_rss_mb"] = int(rss_kb / 1024)
+        except Exception:
+            pass
+
+        try:
+            usage = shutil.disk_usage(str(self.settings.workspace_dir))
+            data["workspace_free_gb"] = round(usage.free / (1024 ** 3), 2)
+        except Exception:
+            pass
+
+        if os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+            data["auth_mode"] = "subscription_oauth"
+        elif os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"):
+            data["auth_mode"] = "api_key_credits"
+        return data
+
+    def _check_integrity(self, current_version: str) -> dict:
+        issues: list[str] = []
+        warnings: list[str] = []
+        required_paths = [
+            ("workspace_dir", Path(self.settings.workspace_dir)),
+            ("memory_dir", Path(self.settings.memory_dir)),
+            ("config_dir", Path(self.settings.lethe_config_dir)),
+            ("db_parent", Path(self.settings.db_path).parent),
+        ]
+        for label, path in required_paths:
+            if not path.exists():
+                issues.append(f"{label} missing: {path}")
+
+        principal = self.registry.get(self.cortex_id)
+        if not principal or principal.state == ActorState.TERMINATED:
+            issues.append("cortex principal actor missing or terminated")
+
+        pyproject = self.install_dir / "pyproject.toml"
+        if not pyproject.exists():
+            warnings.append(f"pyproject.toml not found at {pyproject}")
+        else:
+            detected = self._detect_current_version()
+            if _normalize_tag(detected) != _normalize_tag(current_version):
+                warnings.append(
+                    f"version mismatch (detected={detected}, running={current_version})"
+                )
+
+        if self.install_dir.joinpath(".git").exists() and self._repo_dirty():
+            warnings.append("repository has local uncommitted changes")
+
+        return {"ok": not issues, "issues": issues, "warnings": warnings}
