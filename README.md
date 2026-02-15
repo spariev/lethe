@@ -16,29 +16,45 @@ Lethe is a 24/7 AI assistant that you communicate with via Telegram. It remember
 ## Architecture
 
 ```
-User (Telegram) ─── Cortex (conscious executive, coordinator)
-                        │
-              ┌─────────┼──────────┐
-              ↓         ↓          ↓
-            DMN      Worker     Worker      (subagents)
-        (background)  (task)    (task)
-              │
-              ↓
-         Memory (LanceDB)
-         ├── blocks (config/blocks/)
-         ├── archival (vector + FTS)
-         └── messages (conversation history)
+User (Telegram) <-> Cortex (principal actor, user-facing)
+                     │
+          ┌──────────┼──────────┐
+          ↓          ↓          ↓
+        DMN       Amygdala   Subagents
+     (background) (salience)  (task workers)
+          │          │          │
+          └──────────┴──────────┘
+                     │
+                     ↓
+              Actor Registry + Event Bus
+                     │
+                     ↓
+               Memory (LanceDB)
+               ├── blocks (config/blocks/)
+               ├── archival (vector + FTS)
+               └── messages (conversation history)
 ```
 
 ### Actor Model
 
-Lethe uses a neuroscience-inspired multi-agent system:
+Lethe uses a neuroscience-inspired actor system:
 
 | Actor | Role | Tools |
 |-------|------|-------|
-| **Cortex** | Conscious executive layer. The ONLY agent that talks to the user. Pure coordinator — delegates ALL work to subagents. | Actor management, memory, Telegram |
-| **DMN** (Default Mode Network) | Persistent background thinker. Runs every 15 min. Scans goals, reorganizes memory, writes reflections, surfaces urgent items. | File I/O, memory, search |
-| **Subagents** | Spawned on demand for specific tasks. Report results back to cortex. Cannot access Telegram — only actor messaging. | Bash, file I/O, web search, browser |
+| **Cortex** | Principal actor and the ONLY actor that talks to the user. Hybrid execution: handles quick local tasks directly, delegates long/parallel work. | Actor orchestration, memory, Telegram, quick CLI/file work |
+| **DMN** (Default Mode Network) | Periodic background cognition (heartbeat-driven): scans goals/reminders, updates state, writes ideas/reflections, escalates meaningful insights. | File I/O, memory, search |
+| **Amygdala** | Background salience monitor: tags emotional/urgency patterns and escalates only on meaningful urgency/repeated high-salience signals. | Conversation/memory analysis, file I/O |
+| **Subagents** | Spawned on demand for focused tasks. Report to cortex/parent actors only. No direct user channel. | Bash, file I/O, search, browser, actor tools |
+
+### Inter-Actor Signaling
+
+Actor messages use structured metadata channels, not in-band control tags:
+
+- `channel="task_update"` with `kind` values such as `done`, `failed`, `progress`
+- `channel="user_notify"` for explicit escalation requests to cortex
+- Optional metadata fields (e.g. `source`, `kind`) allow routing and policy decisions
+
+This keeps content and control planes separated. Cortex can apply throttling/dedup policy before forwarding background notifications to the user.
 
 ### Prompt Caching
 
@@ -193,7 +209,7 @@ Conversation history stored locally. Searchable via `conversation_search` tool.
 | `spawn_actor` | Spawn a subagent with specific goals and tools |
 | `kill_actor` | Terminate a stuck subagent |
 | `ping_actor` | Check a subagent's status and progress |
-| `send_message` | Send a message to another actor |
+| `send_message` | Send a message to another actor (supports metadata `channel` / `kind`) |
 | `discover_actors` | See all actors in a group |
 | `wait_for_response` | Block until a reply arrives |
 | `memory_read/update/append` | Core memory block management |
@@ -264,6 +280,7 @@ Enable with `LETHE_CONSOLE=true`. Web dashboard on port 8777.
 | `MEMORY_DIR` | Memory data storage | `./data/memory` |
 | `LETHE_CONSOLE` | Enable web console | `false` |
 | `HEARTBEAT_INTERVAL` | DMN round interval (seconds) | `900` |
+| `BACKGROUND_NOTIFY_COOLDOWN_SECONDS` | Minimum interval between forwarded DMN/Amygdala user notifications | `1800` |
 
 Note: `.env` file takes precedence over shell environment variables.
 
@@ -295,15 +312,13 @@ uv run pytest
 uv run pytest tests/test_actor.py -v
 ```
 
-### Test Coverage (180 tests)
+### Test Coverage
 
-- `test_actor.py` — 60 tests (actor model, registry, tools, lifecycle)
-- `test_dmn.py` — 6 tests (default mode network)
-- `test_tools.py` — 51 tests (filesystem, CLI, browser, web search)
-- `test_blocks.py` — 15 tests (file-based memory blocks)
-- `test_truncate.py` — 20 tests (smart truncation utilities)
-- `test_conversation.py` — 16 tests (conversation manager)
-- `test_hippocampus.py` — 10 tests (autoassociative memory recall)
+The test suite covers:
+- actor lifecycle, messaging, orchestration, and routing
+- DMN/Amygdala background rounds and escalation behavior
+- filesystem/CLI/browser/web tools
+- memory blocks, truncation, conversation manager, and hippocampus recall
 
 ## Project Structure
 
