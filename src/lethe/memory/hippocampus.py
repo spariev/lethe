@@ -14,6 +14,8 @@ from collections import deque
 from typing import Optional, Callable, Awaitable
 from datetime import datetime, timezone
 
+from lethe.prompts import load_prompt_template
+
 logger = logging.getLogger(__name__)
 
 # Max lines of recalled memories before summarization
@@ -22,77 +24,20 @@ MAX_RECALL_LINES = 500
 # Minimum score threshold for including memories
 MIN_SCORE_THRESHOLD = 0.3
 
-# Decision prompt - should we recall?
-ANALYZE_PROMPT = """You are a memory retrieval assistant. Decide if looking up memories would benefit the current conversation.
+ANALYZE_PROMPT = load_prompt_template(
+    "hippocampus_analyze",
+    fallback='{"should_recall": false, "search_query": null, "reason": "template missing"}',
+)
 
-RECENT CONTEXT:
-{context}
+RELEVANCE_PROMPT = load_prompt_template(
+    "hippocampus_relevance",
+    fallback="USER MESSAGE: {message}\nMEMORIES:\n{candidates}\nReturn JSON array indices.",
+)
 
-NEW USER MESSAGE:
-{message}
-
-Would looking up memories (past conversations, archival notes, credentials, previous decisions) benefit the response?
-
-Think about:
-- Does this reference something from before?
-- Would past context improve the answer?
-- Are there credentials/configs/patterns we discussed?
-- Is this a continuation of previous work?
-
-Look for:
-- References to people, places, projects, or things mentioned before
-- Questions that might have been answered previously
-- Credentials, API keys, configurations discussed before
-- Patterns, preferences, or decisions made in the past
-
-Do NOT recall for:
-- Simple greetings ("Hello!", "Hi")
-- Self-contained questions ("What's 2+2?")
-- New topics with no prior context
-- Explicit "forget" or "start fresh" requests
-
-Respond ONLY with valid JSON:
-{{"should_recall": true/false, "search_query": "2-5 word query or null", "reason": "brief reason"}}
-
-Examples:
-- "Deploy the app" -> {{"should_recall": true, "search_query": "server deployment config", "reason": "may need server details"}}
-- "What did we decide about the API?" -> {{"should_recall": true, "search_query": "API design decisions", "reason": "explicit reference to past"}}
-- "Hello!" -> {{"should_recall": false, "search_query": null, "reason": "simple greeting"}}
-- "Fix the bug in auth.py" -> {{"should_recall": true, "search_query": "auth.py issues", "reason": "may have context"}}
-
-JSON only:"""
-
-# Summarization prompt - preserves reference data
-RELEVANCE_PROMPT = """You are filtering memory search results for relevance.
-
-USER MESSAGE: {message}
-
-The following memories were retrieved by search. For each one, decide if it's relevant to the user's current message. Return ONLY a JSON array of the indices (0-based) that are relevant.
-
-MEMORIES:
-{candidates}
-
-Return ONLY a JSON array of relevant indices, e.g. [0, 2, 4]
-If none are relevant, return []
-JSON only:"""
-
-SUMMARIZE_PROMPT = """Summarize these recalled memories concisely for context. 
-
-CRITICAL: Preserve ALL of the following exactly as-is (do not paraphrase or omit):
-- Timestamps and dates (keep [YYYY-MM-DD HH:MM] format)
-- URLs, links, file paths
-- Credentials, API keys, tokens
-- IDs, reference numbers
-- Names of people, projects, tools
-- Code snippets, commands
-- Specific numbers and measurements
-
-Keep timing context - when things happened matters. Strip filler and redundancy, keep facts dense.
-
-Memories to summarize:
-{memories}
-
-Summary (preserve timestamps and reference data):"""
+SUMMARIZE_PROMPT = load_prompt_template(
+    "hippocampus_summarize",
+    fallback="Summarize memories:\n{memories}",
+)
 
 
 # Warning added to recall block

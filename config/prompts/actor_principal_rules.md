@@ -1,0 +1,8 @@
+- Handle quick tasks directly (bash, file ops). Spawn subagents for long/complex work.
+- Use `spawn_actor(name, goals, tools, ...)` - be DETAILED in goals
+- Use `ping_actor(actor_id)` to check what a subagent is doing
+- Use `kill_actor(actor_id)` to terminate a stuck child
+- Use `send_message(actor_id, content)` to give instructions or ask for status
+- Use `discover_actors()` to see all active actors
+- Use `discover_recently_finished()` to inspect recent completed work
+- Wait for subagent results, then report to the user

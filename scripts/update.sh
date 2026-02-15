@@ -168,6 +168,45 @@ get_native_version() {
     fi
 }
 
+detect_workspace_dir() {
+    if [ -n "${LETHE_WORKSPACE_DIR:-}" ]; then
+        echo "$LETHE_WORKSPACE_DIR"
+        return
+    fi
+    if [ -f "$CONFIG_DIR/.env" ]; then
+        local ws
+        ws=$(grep '^WORKSPACE_DIR=' "$CONFIG_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2-)
+        if [ -n "$ws" ]; then
+            echo "$ws"
+            return
+        fi
+    fi
+    echo "$HOME/lethe"
+}
+
+sync_prompt_templates() {
+    local source_root="$1"
+    local workspace_dir="$2"
+    local source_dir="$source_root/config/prompts"
+    local target_dir="$workspace_dir/prompts"
+
+    if [ ! -d "$source_dir" ]; then
+        return
+    fi
+
+    mkdir -p "$target_dir"
+    while IFS= read -r -d '' file; do
+        local rel="${file#$source_dir/}"
+        local dst="$target_dir/$rel"
+        mkdir -p "$(dirname "$dst")"
+        if [ ! -f "$dst" ]; then
+            cp "$file" "$dst"
+        fi
+    done < <(find "$source_dir" -type f -name '*.md' -print0)
+
+    success "Prompt templates synced to $target_dir"
+}
+
 update_container() {
     local container_cmd="$1"
     local latest_version="$2"
@@ -205,6 +244,7 @@ update_container() {
     
     info "Rebuilding container image..."
     cd "$tmp_dir"
+    sync_prompt_templates "$tmp_dir" "$workspace_dir"
     if [[ "$container_cmd" == "podman" ]]; then
         $container_cmd build -t lethe:latest --label "version=$latest_version" .
     else
@@ -272,6 +312,10 @@ update_native() {
     if command -v uv &>/dev/null; then
         uv sync
     fi
+
+    local workspace_dir
+    workspace_dir=$(detect_workspace_dir)
+    sync_prompt_templates "$install_dir" "$workspace_dir"
     
     success "Code updated to $target_version"
 }

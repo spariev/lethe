@@ -17,6 +17,7 @@ from litellm import acompletion, completion
 
 from lethe.utils import strip_model_tags
 from lethe.memory.anthropic_oauth import AnthropicOAuth, is_oauth_available
+from lethe.prompts import load_prompt_template
 
 logger = logging.getLogger(__name__)
 
@@ -88,29 +89,17 @@ SLIDING_WINDOW_KEEP_RATIO = 0.7  # Keep 70% of context after compaction
 COMPACTION_TRIGGER_RATIO = 0.85  # Trigger compaction at 85% capacity
 SUMMARY_MAX_LINES = 30  # Max summary lines (truncate by lines, not chars)
 
-# Minimal heartbeat system prompt (lightweight, no full identity)
-HEARTBEAT_SYSTEM_PROMPT = """You are Lethe's background reflection process. Your job is to:
-1. Check pending tasks, reminders, or calendar items
-2. Reflect on your principal's goals and well-being
-3. Update ~/lethe/questions.md with new reflections or answered questions
-4. Report anything time-sensitive that needs user attention
+# Minimal heartbeat system prompt (template)
+HEARTBEAT_SYSTEM_PROMPT = load_prompt_template(
+    "llm_heartbeat_system",
+    fallback="You are background reflection. Reply with ok unless urgent.",
+)
 
-You have file tools — use them to read and update ~/lethe/questions.md.
-
-Be concise. End with either:
-- "ok" if nothing urgent
-- A brief message if something needs attention NOW"""
-
-# Letta-style summarization prompt
-SUMMARIZE_PROMPT = """Summarize this conversation concisely from the AI's perspective (first person).
-
-Focus on:
-- Key decisions and outcomes
-- Important facts learned about the user
-- Unresolved tasks or questions
-
-Keep it under 100 words. Be terse - bullet points are fine.
-Output ONLY the summary, nothing else."""
+# Letta-style summarization prompt (template)
+SUMMARIZE_PROMPT = load_prompt_template(
+    "llm_summarize",
+    fallback="Summarize conversation concisely. Output summary only.",
+)
 
 
 @dataclass

@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Callable, Awaitable, Optional
 
+from lethe.prompts import load_prompt_template
 from lethe.utils import strip_model_tags
 
 logger = logging.getLogger(__name__)
@@ -20,52 +21,20 @@ DEFAULT_HEARTBEAT_INTERVAL = 15 * 60
 # Full context heartbeat interval (2 hours)
 FULL_CONTEXT_INTERVAL = 2 * 60 * 60
 
-HEARTBEAT_MESSAGE = """[System Heartbeat - {timestamp}]
+HEARTBEAT_MESSAGE = load_prompt_template(
+    "heartbeat_message",
+    fallback="[System Heartbeat - {timestamp}]\n\n{reminders}\nRespond with ok unless urgent.",
+)
 
-{reminders}
-Review pending items. If anything needs attention NOW, report it.
+HEARTBEAT_MESSAGE_FULL = load_prompt_template(
+    "heartbeat_message_full",
+    fallback="[System Heartbeat - {timestamp}]\n\n{reminders}\nFull review. Respond with ok unless urgent.",
+)
 
-Otherwise, briefly reflect:
-- Is there a question you should ask your principal next time you talk?
-- Any pattern you've noticed that could help them?
-- Anything worth noting in ~/lethe/questions.md?
-
-If you have a reflection, write it to ~/lethe/questions.md using your tools.
-
-End with either:
-- "ok" if nothing to report
-- A brief, actionable message if something needs user attention
-"""
-
-HEARTBEAT_MESSAGE_FULL = """[System Heartbeat - {timestamp}]
-
-This is a full context check-in with your complete identity and memory.
-
-{reminders}
-Review and reflect:
-1. **Pending items** — tasks, reminders, deadlines approaching
-2. **Projects** — read ~/lethe/projects/ if needed. Any stalled? Any opportunities?
-3. **Your principal** — how are they doing? What do you know about their goals, health, relationships? What's missing?
-4. **Questions** — read ~/lethe/questions.md. Update it with new reflections, mark answered questions, add new ones.
-5. **Self-improvement** — anything about your own capabilities you should improve? Skills to write? Code to suggest?
-
-Take action: update questions.md, write notes, create reminders. Don't just think — do.
-
-End with either:
-- "ok" if nothing to surface to user
-- A brief, actionable message if something needs user attention
-"""
-
-
-SUMMARIZE_HEARTBEAT_PROMPT = """You are filtering an AI assistant's heartbeat message. Only pass through genuinely urgent items.
-
-MESSAGE:
-{response}
-
-If nothing urgent, respond with just: ok
-If urgent, respond with just the urgent part (1-2 sentences max).
-
-Urgent = would interrupt someone's work. Routine check-ins, status updates, ponderings → not urgent."""
+SUMMARIZE_HEARTBEAT_PROMPT = load_prompt_template(
+    "heartbeat_summarize",
+    fallback="MESSAGE:\n{response}\n\nReply with ok unless urgent.",
+)
 
 
 class Heartbeat:

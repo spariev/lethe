@@ -11,6 +11,7 @@ from typing import Callable, Optional, Any
 
 from lethe.config import Settings, get_settings
 from lethe.memory import MemoryStore, AsyncLLMClient, LLMConfig, Hippocampus
+from lethe.prompts import load_prompt_template
 from lethe.tools import get_all_tools, function_to_schema
 
 logger = logging.getLogger(__name__)
@@ -163,12 +164,11 @@ class Agent:
             formatted.append(f"{role}: {content[:500]}")
         
         messages_text = "\n".join(formatted)
-        
-        prompt = f"""Summarize this conversation history concisely. Preserve key facts, decisions, and context.
-
-{messages_text}
-
-Summary:"""
+        summarize_tpl = load_prompt_template(
+            "agent_history_summary",
+            fallback="Summarize conversation:\n{messages_text}\n\nSummary:",
+        )
+        prompt = summarize_tpl.format(messages_text=messages_text)
         
         try:
             summary = await self.llm.complete(prompt, use_aux=True, usage_tag="history_summary")
@@ -225,7 +225,10 @@ Summary:"""
         
         # Final fallback if no identity or persona block exists
         logger.warning("No 'identity' or 'persona' memory block found, using minimal fallback")
-        return "You are an AI assistant with persistent memory."
+        return load_prompt_template(
+            "agent_system_fallback",
+            fallback="You are an AI assistant with persistent memory.",
+        )
     
     async def _summarize_memories(self, prompt: str) -> str:
         """Summarize memories using LLM (for hippocampus)."""

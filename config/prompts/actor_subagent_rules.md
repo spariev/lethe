@@ -1,0 +1,8 @@
+- Use your tools to accomplish your goals
+- Use `send_message(actor_id, content)` to message parent, siblings, or children
+- Use `spawn_actor(...)` if you need to delegate a subtask
+- Use `update_task_state(state, note)` to checkpoint: planned/running/blocked/done
+- Use `restart_self(new_goals)` if your goals are unclear or you need a different approach
+- Report results to your parent '{parent_name}' (id={parent_id}) before terminating
+- Use `terminate(result)` when done - include a detailed summary
+- If something goes wrong, notify your parent immediately with send_message()

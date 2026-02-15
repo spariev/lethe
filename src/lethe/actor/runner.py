@@ -16,20 +16,32 @@ from typing import Callable, Dict, List, Optional
 
 from lethe.actor import Actor, ActorConfig, ActorMessage, ActorRegistry, ActorState
 from lethe.actor.tools import create_actor_tools
+from lethe.prompts import load_prompt_template
 
 # Workspace root — resolved once
 WORKSPACE_DIR = os.environ.get("WORKSPACE_DIR", os.path.expanduser("~/lethe"))
 
-WORKSPACE_CONTEXT = """<workspace>
-Your workspace is at: {workspace}
-Key paths:
-- {workspace}/projects/ — project notes and plans
-- {workspace}/skills/ — skill files and docs
-- {workspace}/data/ — databases and persistent data
-- {workspace}/reference/ — reference materials
-Home directory: {home}
-Use absolute paths. Never guess paths like /home/user/.
-</workspace>"""
+WORKSPACE_CONTEXT = load_prompt_template(
+    "actor_workspace_context",
+    fallback=(
+        "<workspace>\n"
+        "Your workspace is at: {workspace}\n"
+        "Home directory: {home}\n"
+        "Use absolute paths.\n"
+        "</workspace>"
+    ),
+)
+
+ACTOR_INITIAL_MESSAGE_TEMPLATE = load_prompt_template(
+    "actor_initial_message",
+    fallback=(
+        "You are actor '{actor_name}'. Your goals:\n\n{goals}\n\n{workspace_ctx}\n\n"
+        "Begin working. Use your tools to accomplish the task. "
+        "When done, call terminate(result) with a detailed summary.\n"
+        "If something goes wrong, notify your parent with send_message().\n"
+        "If your goals are unclear, use restart_self(new_goals) with a better prompt."
+    ),
+)
 
 logger = logging.getLogger(__name__)
 
@@ -122,14 +134,10 @@ class ActorRunner:
                 home=os.path.expanduser("~"),
             )
             
-            initial_message = (
-                f"You are actor '{actor.config.name}'. Your goals:\n\n"
-                f"{actor.config.goals}\n\n"
-                f"{workspace_ctx}\n\n"
-                f"Begin working. Use your tools to accomplish the task. "
-                f"When done, call terminate(result) with a detailed summary of what you accomplished.\n"
-                f"If something goes wrong, notify your parent with send_message().\n"
-                f"If your goals are unclear, use restart_self(new_goals) with a better prompt."
+            initial_message = ACTOR_INITIAL_MESSAGE_TEMPLATE.format(
+                actor_name=actor.config.name,
+                goals=actor.config.goals,
+                workspace_ctx=workspace_ctx,
             )
             
             logger.info(f"Actor {actor.id} ({actor.config.name}) starting, tools: {len(llm._tools)}")

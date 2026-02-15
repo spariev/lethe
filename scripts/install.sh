@@ -438,6 +438,27 @@ clone_repo() {
     success "Repository ready ($version)"
 }
 
+sync_prompt_templates() {
+    local source_dir="$INSTALL_DIR/config/prompts"
+    local target_dir="$WORKSPACE_DIR/prompts"
+
+    if [ ! -d "$source_dir" ]; then
+        return
+    fi
+
+    mkdir -p "$target_dir"
+    while IFS= read -r -d '' file; do
+        local rel="${file#$source_dir/}"
+        local dst="$target_dir/$rel"
+        mkdir -p "$(dirname "$dst")"
+        if [ ! -f "$dst" ]; then
+            cp "$file" "$dst"
+        fi
+    done < <(find "$source_dir" -type f -name '*.md' -print0)
+
+    success "Prompt templates synced to $target_dir"
+}
+
 setup_config() {
     mkdir -p "$CONFIG_DIR"
     
@@ -891,6 +912,8 @@ main() {
     install_dependencies
     clone_repo
     mkdir -p "$CONFIG_DIR"
+    mkdir -p "$WORKSPACE_DIR"
+    sync_prompt_templates
     
     if [[ "$INSTALL_MODE" == "container" ]]; then
         # Container mode

@@ -17,6 +17,7 @@ from typing import Callable, Awaitable, Optional
 from lethe.actor import Actor, ActorConfig, ActorRegistry, ActorState, ActorMessage
 from lethe.actor.tools import create_actor_tools
 from lethe.memory.llm import AsyncLLMClient, LLMConfig
+from lethe.prompts import load_prompt_template
 
 logger = logging.getLogger(__name__)
 
@@ -29,56 +30,23 @@ FLASHBACK_LOOKBACK = 12
 TAG_LOG_MAX_CHARS = 24000
 TAG_LOG_KEEP_LINES = 140
 
-AMYGDALA_SYSTEM_PROMPT_TEMPLATE = """You are Amygdala — a background emotional salience module.
+AMYGDALA_SYSTEM_PROMPT_TEMPLATE = load_prompt_template(
+    "amygdala_system",
+    fallback=(
+        "You are Amygdala. Analyze emotional salience in background.\n"
+        "Workspace: {workspace}\nPrincipal:\n{principal_context}\n"
+        "Notify cortex only on meaningful escalation."
+    ),
+)
 
-<purpose>
-You perform fast emotional monitoring for the principal assistant:
-- Tag recent user signals with valence and arousal
-- Detect urgency, threat, social tension, and boundary risks
-- Detect flashbacks (repeated unresolved high-arousal themes)
-- Notify cortex only when escalation is justified
-</purpose>
-
-<inputs>
-- Recent user signals are provided in the round message
-- Previous amygdala state at: {workspace}/amygdala_state.md
-- Emotional tags log at: {workspace}/emotional_tags.md
-- Principal context snapshot:
-{principal_context}
-</inputs>
-
-<workflow>
-1. Read {workspace}/amygdala_state.md if present.
-2. Review recent user signals from this round message.
-3. Produce compact tags (valence [-1..1], arousal [0..1], trigger categories, confidence [0..1]).
-4. Check flashback likelihood: similar high-arousal themes repeating across rounds.
-5. Write updates to:
-   - {workspace}/emotional_tags.md (append concise entries)
-   - {workspace}/amygdala_state.md (latest baseline + active concerns)
-6. If urgent/escalation needed, send_message(cortex_id, "[AMYGDALA_ALERT] ...").
-7. Call terminate(result) with concise summary.
-</workflow>
-
-<rules>
-- You are not user-facing.
-- Avoid spam: only escalate on meaningful urgency or strong repeated pattern.
-- Keep state concise and operational.
-- Use absolute paths rooted at {workspace}.
-- Most rounds should be quick (2-3 turns).
-</rules>"""
-
-AMYGDALA_ROUND_MESSAGE = """[Amygdala Round - {timestamp}]
-
-Recent user signals:
-{recent_signals}
-
-Heuristic seed tags:
-{seed_tags}
-
-Previous state:
-{previous_state}
-
-Detect salience, tag emotions, check flashbacks, update files, and terminate."""
+AMYGDALA_ROUND_MESSAGE = load_prompt_template(
+    "amygdala_round_message",
+    fallback=(
+        "[Amygdala Round - {timestamp}]\n\nRecent user signals:\n{recent_signals}\n\n"
+        "Seed tags:\n{seed_tags}\n\nPrevious state:\n{previous_state}\n\n"
+        "Tag salience and terminate."
+    ),
+)
 
 
 class Amygdala:
@@ -296,23 +264,32 @@ class Amygdala:
         config.context_limit = min(config.context_limit, 16000)
         config.max_output_tokens = min(config.max_output_tokens, 800)
 
+        classifier_system = load_prompt_template(
+            "amygdala_seed_system",
+            fallback=(
+                "You classify emotional salience from text. Output strict JSON only: "
+                "array of {signal,valence,arousal,tags,confidence}."
+            ),
+        )
         classifier = AsyncLLMClient(
             config=config,
-            system_prompt=(
-                "You classify emotional salience from text. Output strict JSON only: "
-                "an array of objects with keys signal, valence, arousal, tags, confidence."
-            ),
+            system_prompt=classifier_system,
             usage_scope="amygdala:seed",
         )
-        prompt = (
-            "Classify the most recent user signals.\n"
-            "Rules:\n"
-            "- valence in [-1,1], arousal in [0,1], confidence in [0,1]\n"
-            "- tags should be short snake_case labels\n"
-            "- capture sarcasm, mixed affect, and contextual inversion\n"
-            "- output max 8 items and ONLY JSON array\n\n"
-            f"Previous state summary:\n{previous_state[:1200]}\n\n"
-            f"Recent signals:\n{recent_signals}\n"
+        classifier_prompt = load_prompt_template(
+            "amygdala_seed_user",
+            fallback=(
+                "Classify recent user signals.\n"
+                "- valence in [-1,1], arousal/confidence in [0,1]\n"
+                "- capture sarcasm and mixed affect\n"
+                "- output max 8 items as JSON array only\n\n"
+                "Previous state summary:\n{previous_state}\n\n"
+                "Recent signals:\n{recent_signals}\n"
+            ),
+        )
+        prompt = classifier_prompt.format(
+            previous_state=previous_state[:1200],
+            recent_signals=recent_signals,
         )
 
         try:

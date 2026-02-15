@@ -19,7 +19,71 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
+from lethe.prompts import load_prompt_template
+
 logger = logging.getLogger(__name__)
+
+
+PRINCIPAL_PROMPT_BLOCK = load_prompt_template(
+    "actor_principal_preamble",
+    fallback=(
+        "You are the cortex - the conscious executive layer, the user's direct interface.\n"
+        "You are the ONLY actor that communicates with the user.\n\n"
+        "You have CLI and file tools - handle quick tasks DIRECTLY:\n"
+        "- Reading files, checking status, running simple commands\n"
+        "- Quick edits, searches, directory listings\n"
+        "- Anything completable in under a minute\n\n"
+        "Spawn a subagent ONLY when:\n"
+        "- The task will take more than ~1 minute (multi-step, research, long builds)\n"
+        "- It needs tools you don't have (web_search, fetch_webpage, browser)\n"
+        "- You want parallel execution (multiple independent tasks)\n"
+        "Be specific in subagent goals - they only know what you tell them.\n"
+        "Monitor subagents with ping_actor(). Kill stuck ones with kill_actor().\n\n"
+        "CRITICAL - NEVER spawn duplicates:\n"
+        "- ALWAYS call discover_actors() BEFORE spawning to see who's already running\n"
+        "- If an actor with similar goals exists, send_message() to it instead\n"
+        "- ONE actor per task. Do NOT spawn multiple actors for the same request"
+    ),
+)
+
+SUBAGENT_PROMPT_BLOCK = load_prompt_template(
+    "actor_subagent_preamble",
+    fallback=(
+        "You are a subagent actor named '{actor_name}'.\n"
+        "You were spawned by '{parent_name}' (id={parent_id}) to accomplish a specific task.\n"
+        "You CANNOT talk to the user directly. Report your results to the actor that spawned you.\n"
+        "If something goes wrong, notify your parent immediately.\n"
+        "If your goals are unclear, use restart_self(new_goals) with better goals."
+    ),
+)
+
+PRINCIPAL_RULES_BLOCK = load_prompt_template(
+    "actor_principal_rules",
+    fallback=(
+        "- Handle quick tasks directly (bash, file ops). Spawn subagents for long/complex work.\n"
+        "- Use `spawn_actor(name, goals, tools, ...)` - be DETAILED in goals\n"
+        "- Use `ping_actor(actor_id)` to check what a subagent is doing\n"
+        "- Use `kill_actor(actor_id)` to terminate a stuck child\n"
+        "- Use `send_message(actor_id, content)` to give instructions or ask for status\n"
+        "- Use `discover_actors()` to see all active actors\n"
+        "- Use `discover_recently_finished()` to inspect recent completed work\n"
+        "- Wait for subagent results, then report to the user"
+    ),
+)
+
+SUBAGENT_RULES_BLOCK = load_prompt_template(
+    "actor_subagent_rules",
+    fallback=(
+        "- Use your tools to accomplish your goals\n"
+        "- Use `send_message(actor_id, content)` to message parent, siblings, or children\n"
+        "- Use `spawn_actor(...)` if you need to delegate a subtask\n"
+        "- Use `update_task_state(state, note)` to checkpoint: planned/running/blocked/done\n"
+        "- Use `restart_self(new_goals)` if your goals are unclear or you need a different approach\n"
+        "- Report results to your parent '{parent_name}' (id={parent_id}) before terminating\n"
+        "- Use `terminate(result)` when done - include a detailed summary\n"
+        "- If something goes wrong, notify your parent immediately with send_message()"
+    ),
+)
 
 
 class ActorState(str, Enum):
@@ -343,33 +407,17 @@ class Actor:
         parts = []
         
         if self.is_principal:
-            parts.append("You are the cortex — the conscious executive layer, the user's direct interface.")
-            parts.append("You are the ONLY actor that communicates with the user.")
-            parts.append("")
-            parts.append("You have CLI and file tools — handle quick tasks DIRECTLY:")
-            parts.append("- Reading files, checking status, running simple commands")
-            parts.append("- Quick edits, searches, directory listings")
-            parts.append("- Anything completable in under a minute")
-            parts.append("")
-            parts.append("Spawn a subagent ONLY when:")
-            parts.append("- The task will take more than ~1 minute (multi-step, research, long builds)")
-            parts.append("- It needs tools you don't have (web_search, fetch_webpage, browser)")
-            parts.append("- You want parallel execution (multiple independent tasks)")
-            parts.append("Be specific in subagent goals — they only know what you tell them.")
-            parts.append("Monitor subagents with ping_actor(). Kill stuck ones with kill_actor().")
-            parts.append("")
-            parts.append("CRITICAL — NEVER spawn duplicates:")
-            parts.append("- ALWAYS call discover_actors() BEFORE spawning to see who's already running")
-            parts.append("- If an actor with similar goals exists, send_message() to it instead")
-            parts.append("- ONE actor per task. Do NOT spawn multiple actors for the same request")
+            parts.extend(PRINCIPAL_PROMPT_BLOCK.splitlines())
         else:
             parent = self.registry.get(self.spawned_by)
             parent_name = parent.config.name if parent else self.spawned_by
-            parts.append(f"You are a subagent actor named '{self.config.name}'.")
-            parts.append(f"You were spawned by '{parent_name}' (id={self.spawned_by}) to accomplish a specific task.")
-            parts.append("You CANNOT talk to the user directly. Report your results to the actor that spawned you.")
-            parts.append("If something goes wrong, notify your parent immediately.")
-            parts.append("If your goals are unclear, use restart_self(new_goals) with better goals.")
+            parts.extend(
+                SUBAGENT_PROMPT_BLOCK.format(
+                    actor_name=self.config.name,
+                    parent_name=parent_name,
+                    parent_id=self.spawned_by,
+                ).splitlines()
+            )
         
         parts.append(f"\n<goals>\n{self.config.goals}\n</goals>")
         
@@ -443,23 +491,14 @@ class Actor:
         
         parts.append("\n<rules>")
         if self.is_principal:
-            parts.append("- Handle quick tasks directly (bash, file ops). Spawn subagents for long/complex work.")
-            parts.append("- Use `spawn_actor(name, goals, tools, ...)` — be DETAILED in goals")
-            parts.append("- Use `ping_actor(actor_id)` to check what a subagent is doing")
-            parts.append("- Use `kill_actor(actor_id)` to terminate a stuck child")
-            parts.append("- Use `send_message(actor_id, content)` to give instructions or ask for status")
-            parts.append("- Use `discover_actors()` to see all active actors")
-            parts.append("- Use `discover_recently_finished()` to inspect recent completed work")
-            parts.append("- Wait for subagent results, then report to the user")
+            parts.extend(PRINCIPAL_RULES_BLOCK.splitlines())
         else:
-            parts.append("- Use your tools to accomplish your goals")
-            parts.append("- Use `send_message(actor_id, content)` to message parent, siblings, or children")
-            parts.append("- Use `spawn_actor(...)` if you need to delegate a subtask")
-            parts.append("- Use `update_task_state(state, note)` to checkpoint: planned/running/blocked/done")
-            parts.append("- Use `restart_self(new_goals)` if your goals are unclear or you need a different approach")
-            parts.append(f"- Report results to your parent '{parent_name}' (id={self.spawned_by}) before terminating")
-            parts.append("- Use `terminate(result)` when done — include a detailed summary")
-            parts.append("- If something goes wrong, notify your parent immediately with send_message()")
+            parts.extend(
+                SUBAGENT_RULES_BLOCK.format(
+                    parent_name=parent_name,
+                    parent_id=self.spawned_by,
+                ).splitlines()
+            )
         parts.append("</rules>")
 
         self._last_prompt_stats = {

@@ -65,17 +65,33 @@ class MemoryStore:
         logger.info("Memory store initialized")
     
     def _init_workspace_seeds(self, config_dir: str = "config"):
-        """Copy workspace seed files to workspace if not present."""
+        """Copy workspace seed files/directories to workspace if not present.
+
+        Includes:
+        - config/workspace/* -> workspace/*
+        - config/prompts/* -> workspace/prompts/*
+        """
         seeds_dir = Path(config_dir) / "workspace"
-        if not seeds_dir.exists():
-            return
-        
-        for seed_file in seeds_dir.glob("*"):
-            if seed_file.is_file():
-                target = self.workspace_dir / seed_file.name
+        if seeds_dir.exists():
+            for seed_file in seeds_dir.rglob("*"):
+                if not seed_file.is_file():
+                    continue
+                rel = seed_file.relative_to(seeds_dir)
+                target = self.workspace_dir / rel
                 if not target.exists():
+                    target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text(seed_file.read_text())
-                    logger.info(f"Initialized workspace file from seed: {seed_file.name}")
+                    logger.info(f"Initialized workspace file from seed: {rel}")
+
+        prompts_dir = Path(config_dir) / "prompts"
+        if prompts_dir.exists():
+            for prompt_file in prompts_dir.rglob("*.md"):
+                rel = prompt_file.relative_to(prompts_dir)
+                target = self.workspace_dir / "prompts" / rel
+                if not target.exists():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(prompt_file.read_text())
+                    logger.info(f"Initialized workspace prompt from seed: prompts/{rel}")
 
     def _ensure_skills_bootstrap(self, skills_dir: Path):
         """Ensure the skills directory always has a known entrypoint file."""
