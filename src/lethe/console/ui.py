@@ -612,9 +612,18 @@ class ConsoleUI:
         html.append('<div class="mc-subhead">Recent Events</div>')
         if recent_events:
             for e in recent_events[-6:][::-1]:
+                event_type = str(e.get("type", ""))
+                actor_name = str(e.get("actor_name", "") or e.get("payload", {}).get("name", "") or e.get("actor_id", ""))
+                age = self._age_short(e.get("created_at", ""))
+                if event_type in {"actor_spawned", "actor_terminated"}:
+                    verb = "spawned" if event_type == "actor_spawned" else "terminated"
+                    html.append(
+                        f'<div class="mc-row"><b>{verb}</b> {_esc(actor_name)} {age} ago</div>'
+                    )
+                    continue
                 html.append(
-                    f'<div class="mc-row"><b>{_esc(e.get("type", ""))}</b> '
-                    f'{_esc(e.get("actor_id", ""))} {self._age_short(e.get("created_at", ""))} ago</div>'
+                    f'<div class="mc-row"><b>{_esc(event_type)}</b> '
+                    f'{_esc(actor_name)} {age} ago</div>'
                 )
         else:
             html.append('<div class="mc-row">No recent events</div>')

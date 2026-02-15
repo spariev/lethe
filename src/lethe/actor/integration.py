@@ -408,6 +408,7 @@ class ActorSystem:
                 {
                     "type": e.event_type,
                     "actor_id": e.actor_id,
+                    "actor_name": (self.registry.get(e.actor_id).config.name if self.registry.get(e.actor_id) else ""),
                     "group": e.group,
                     "payload": e.payload,
                     "created_at": e.created_at.isoformat(),
