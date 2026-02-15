@@ -64,7 +64,7 @@ class ActorRunner:
         self.llm_factory = llm_factory
         self.available_tools = available_tools or {}
 
-    async def _notify_parent(self, message: str):
+    async def _notify_parent(self, message: str, metadata: Optional[dict] = None):
         """Send a status notification to the parent actor."""
         actor = self.actor
         if actor.spawned_by:
@@ -74,6 +74,7 @@ class ActorRunner:
                     sender=actor.id,
                     recipient=actor.spawned_by,
                     content=message,
+                    metadata=dict(metadata or {}),
                 )
                 try:
                     await parent.send(msg)
@@ -202,8 +203,11 @@ class ActorRunner:
                         {"turn": turn + 1, "max_turns": actor.config.max_turns, "elapsed_seconds": int(elapsed)},
                     )
                     await self._notify_parent(
-                        f"[PROGRESS] {actor.config.name} still working (turn {turn + 1}/{actor.config.max_turns}, "
-                        f"{int(elapsed)}s elapsed). Last: {response[:100] if response else 'starting...'}"
+                        (
+                            f"{actor.config.name} still working (turn {turn + 1}/{actor.config.max_turns}, "
+                            f"{int(elapsed)}s elapsed). Last: {response[:100] if response else 'starting...'}"
+                        ),
+                        metadata={"channel": "task_update", "kind": "progress"},
                     )
                 
                 # Call LLM
@@ -211,7 +215,10 @@ class ActorRunner:
                     response = await llm.chat(message)
                 except Exception as e:
                     logger.error(f"Actor {actor.id} LLM error: {e}")
-                    await self._notify_parent(f"[ERROR] {actor.config.name} hit an error: {e}")
+                    await self._notify_parent(
+                        f"{actor.config.name} hit an error: {e}",
+                        metadata={"channel": "task_update", "kind": "error"},
+                    )
                     actor.terminate(f"Error: {e}")
                     break
                 
@@ -227,12 +234,18 @@ class ActorRunner:
                 elapsed = time.monotonic() - start_time
                 result = f"Max turns reached ({actor.config.max_turns} turns, {int(elapsed)}s). Last: {response[:200] if response else 'none'}"
                 logger.warning(f"Actor {actor.id} hit max turns")
-                await self._notify_parent(f"[MAX TURNS] {actor.config.name}: {result}")
+                await self._notify_parent(
+                    f"{actor.config.name}: {result}",
+                    metadata={"channel": "task_update", "kind": "max_turns"},
+                )
                 actor.terminate(result)
             
         except Exception as e:
             logger.error(f"Actor {actor.id} runner error: {e}", exc_info=True)
-            await self._notify_parent(f"[FATAL] {actor.config.name} crashed: {e}")
+            await self._notify_parent(
+                f"{actor.config.name} crashed: {e}",
+                metadata={"channel": "task_update", "kind": "fatal"},
+            )
             actor.terminate(f"Runner error: {e}")
         
         return actor._result or "No result"

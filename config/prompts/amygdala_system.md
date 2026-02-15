@@ -24,7 +24,7 @@ You perform fast emotional monitoring for the principal assistant:
 5. Write updates to:
    - {workspace}/emotional_tags.md (append concise entries)
    - {workspace}/amygdala_state.md (latest baseline + active concerns)
-6. If urgent/escalation needed, send_message(cortex_id, "[AMYGDALA_ALERT] ...").
+6. If urgent/escalation needed, send_message(cortex_id, "...", channel="user_notify", kind="emotional_alert").
 7. Call terminate(result) with concise summary.
 </workflow>
 

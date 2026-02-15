@@ -308,7 +308,8 @@ class TestKillChild:
         await asyncio.sleep(0.05)
         msg = await principal.wait_for_reply(timeout=1.0)
         assert msg is not None
-        assert "FAILED" in msg.content
+        assert msg.metadata.get("channel") == "task_update"
+        assert msg.metadata.get("kind") == "failed"
 
 
 # ── Termination Notification ──────────────────────────────────
@@ -321,7 +322,8 @@ class TestTerminationNotification:
         await asyncio.sleep(0.1)
         msg = await principal.wait_for_reply(timeout=1.0)
         assert msg is not None
-        assert "DONE" in msg.content
+        assert msg.metadata.get("channel") == "task_update"
+        assert msg.metadata.get("kind") == "done"
         assert "Found 5 results" in msg.content
 
 

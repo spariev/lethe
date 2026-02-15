@@ -110,6 +110,7 @@ class ActorMessage:
     recipient: str = ""    # Actor ID of recipient
     content: str = ""      # Message text
     reply_to: Optional[str] = None  # Message ID this replies to
+    metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def format(self) -> str:
@@ -331,7 +332,13 @@ class Actor:
         await self._inbox.put(message)
         logger.debug(f"Actor {self.id} received message from {message.sender}: {message.content[:50]}...")
 
-    async def send_to(self, recipient_id: str, content: str, reply_to: Optional[str] = None) -> ActorMessage:
+    async def send_to(
+        self,
+        recipient_id: str,
+        content: str,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> ActorMessage:
         """Send a message to another actor."""
         recipient = self.registry.get(recipient_id)
         if recipient is None:
@@ -343,6 +350,7 @@ class Actor:
             recipient=recipient_id,
             content=content,
             reply_to=reply_to,
+            metadata=dict(metadata or {}),
         )
         await recipient.send(msg)
         self._messages.append(msg)
@@ -350,11 +358,17 @@ class Actor:
         self.registry.emit_event(
             "actor_message",
             self,
-            {"recipient": recipient_id, "message_id": msg.id, "content_preview": preview},
+            {
+                "recipient": recipient_id,
+                "message_id": msg.id,
+                "content_preview": preview,
+                "channel": msg.metadata.get("channel", ""),
+                "kind": msg.metadata.get("kind", ""),
+            },
         )
-        text = content.strip()
-        if text.startswith("[USER_NOTIFY]"):
-            notify = text[len("[USER_NOTIFY]"):].strip()
+        channel = str(msg.metadata.get("channel", "")).strip()
+        if channel == "user_notify":
+            notify = content.strip()
             self.registry.emit_event(
                 "user_notify",
                 self,
@@ -676,7 +690,7 @@ class ActorRegistry:
             or "killed by parent" in lowered
             or lowered.startswith("system shutdown")
         )
-        status_tag = "FAILED" if is_failed else "DONE"
+        status_kind = "failed" if is_failed else "done"
         
         # Notify parent if exists and running
         parent = self._actors.get(actor.spawned_by) if actor.spawned_by else None
@@ -684,7 +698,12 @@ class ActorRegistry:
             msg = ActorMessage(
                 sender=actor_id,
                 recipient=actor.spawned_by,
-                content=f"[{status_tag}] {actor.config.name}: {result_text}",
+                content=f"{actor.config.name}: {result_text}",
+                metadata={
+                    "channel": "task_update",
+                    "kind": status_kind,
+                    "source": "termination",
+                },
             )
             try:
                 loop = asyncio.get_running_loop()

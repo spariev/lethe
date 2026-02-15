@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 from lethe.actor import ActorConfig, ActorRegistry
 from lethe.actor.integration import ActorSystem
 from lethe.memory.llm import AsyncLLMClient, LLMConfig
+import lethe.actor.integration as actor_integration
 
 
 @pytest.mark.asyncio
@@ -16,7 +17,11 @@ async def test_user_notify_event_emitted():
     cortex = registry.spawn(ActorConfig(name="cortex", group="main", goals="serve"), is_principal=True)
     worker = registry.spawn(ActorConfig(name="worker", group="main", goals="work"), spawned_by=cortex.id)
 
-    await worker.send_to(cortex.id, "[USER_NOTIFY] Check the deadline now")
+    await worker.send_to(
+        cortex.id,
+        "Check the deadline now",
+        metadata={"channel": "user_notify", "kind": "deadline"},
+    )
 
     events = registry.events.query(event_type="user_notify", actor_id=worker.id)
     assert events
@@ -63,7 +68,7 @@ async def test_llm_circuit_breaker_forces_final_response(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_principal_monitor_forwards_done_and_failed_updates(monkeypatch):
+async def test_principal_monitor_keeps_done_and_failed_updates_in_cortex(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
 
     class DummyLLM:
@@ -96,17 +101,75 @@ async def test_principal_monitor_forwards_done_and_failed_updates(monkeypatch):
 
     worker.terminate("finished result")
     await asyncio.sleep(1.2)
-    send_to_user.assert_awaited()
-    assert any("[DONE]" in c.args[0] for c in send_to_user.await_args_list)
+    send_to_user.assert_not_awaited()
+    first_msg = await principal.wait_for_reply(timeout=0.2)
+    assert first_msg is not None
+    assert first_msg.metadata.get("channel") == "task_update"
+    assert first_msg.metadata.get("kind") == "done"
 
-    send_to_user.reset_mock()
     failed = actor_system.registry.spawn(
         ActorConfig(name="failed-worker", group="main", goals="Fail"),
         spawned_by=principal.id,
     )
     failed.terminate("Error: boom")
     await asyncio.sleep(1.2)
-    assert any("[FAILED]" in c.args[0] for c in send_to_user.await_args_list)
+    send_to_user.assert_not_awaited()
+    second_msg = await principal.wait_for_reply(timeout=0.2)
+    assert second_msg is not None
+    assert second_msg.metadata.get("channel") == "task_update"
+    assert second_msg.metadata.get("kind") == "failed"
+
+    await actor_system.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_background_user_notify_is_throttled(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(actor_integration, "BACKGROUND_NOTIFY_COOLDOWN_SECONDS", 3600)
+
+    class DummyLLM:
+        def __init__(self):
+            self._tools = {}
+            self.tools = []
+            self.context = type("Ctx", (), {"_tool_reference": "", "_build_tool_reference": lambda self, tools: ""})()
+        def add_tool(self, func, schema=None):
+            self._tools[func.__name__] = (func, schema or {})
+        def _update_tool_budget(self):
+            return None
+
+    class DummyAgent:
+        def __init__(self):
+            self.llm = DummyLLM()
+        def add_tool(self, func):
+            self.llm.add_tool(func)
+
+    agent = DummyAgent()
+    actor_system = ActorSystem(agent)
+    await actor_system.setup()
+    send_to_user = AsyncMock()
+    actor_system.set_callbacks(send_to_user=send_to_user)
+
+    principal = actor_system.principal
+    dmn_actor = actor_system.registry.spawn(
+        ActorConfig(name="dmn", group="main", goals="background notify"),
+        spawned_by=principal.id,
+    )
+
+    await dmn_actor.send_to(
+        principal.id,
+        "Important insight",
+        metadata={"channel": "user_notify", "kind": "insight"},
+    )
+    await asyncio.sleep(1.2)
+    send_to_user.assert_awaited_once_with("Important insight")
+
+    await dmn_actor.send_to(
+        principal.id,
+        "Important insight",
+        metadata={"channel": "user_notify", "kind": "insight"},
+    )
+    await asyncio.sleep(1.2)
+    assert send_to_user.await_count == 1
 
     await actor_system.shutdown()
 

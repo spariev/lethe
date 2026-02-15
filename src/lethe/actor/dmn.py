@@ -118,15 +118,15 @@ class DefaultModeNetwork:
 
     @staticmethod
     def _extract_user_notification(messages: list[ActorMessage], cortex_id: str) -> Optional[str]:
-        """Extract latest explicit notification message intended for user delivery."""
+        """Extract latest explicit user notification from structured metadata."""
         candidates = []
         for m in messages:
             if m.recipient != cortex_id or m.sender == cortex_id:
                 continue
+            if m.metadata.get("channel") != "user_notify":
+                continue
             text = (m.content or "").strip()
-            if text.startswith("[USER_NOTIFY]"):
-                candidates.append(text[len("[USER_NOTIFY]"):].strip())
-            elif text.startswith("[URGENT]"):
+            if text:
                 candidates.append(text)
         return candidates[-1] if candidates else None
 
@@ -336,18 +336,11 @@ class DefaultModeNetwork:
         # Clean up
         self._current_actor = None
         
-        # Deliver explicit DMN notification immediately if callback is available.
-        if user_message and self.send_to_user:
-            try:
-                self._status["last_user_notify"] = user_message[:240]
-                await self.send_to_user(user_message)
-                self._status["state"] = "idle"
-                return None
-            except Exception as e:
-                logger.warning(f"DMN: failed to send user notification: {e}")
-                self._status["last_error"] = f"notify failed: {e}"
+        # DMN never sends directly to user; cortex decides if/when to forward.
+        if user_message:
+            self._status["last_user_notify"] = user_message[:240]
         self._status["state"] = "idle"
-        return user_message
+        return None
 
     async def _create_dmn_llm(self, actor: Actor) -> AsyncLLMClient:
         """Create LLM client for DMN with main model and stable system prompt."""

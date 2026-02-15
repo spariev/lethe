@@ -12,6 +12,8 @@ and notifies the cortex when something needs user attention.
 import asyncio
 import json
 import logging
+import os
+import time
 from typing import Callable, Dict, List, Optional
 
 from lethe.actor import Actor, ActorConfig, ActorMessage, ActorRegistry, ActorState
@@ -23,6 +25,8 @@ from lethe.config import Settings, get_settings
 from lethe.memory.llm import AsyncLLMClient, LLMConfig
 
 logger = logging.getLogger(__name__)
+
+BACKGROUND_NOTIFY_COOLDOWN_SECONDS = int(os.environ.get("BACKGROUND_NOTIFY_COOLDOWN_SECONDS", "1800"))
 
 # Tools the cortex keeps (hybrid mode: actor + quick CLI/file + memory + telegram)
 CORTEX_TOOL_NAMES = {
@@ -66,6 +70,8 @@ class ActorSystem:
         self._principal_monitor_task: Optional[asyncio.Task] = None
         self._processed_principal_message_ids: set[str] = set()
         self._last_principal_message_idx = 0
+        self._last_background_notify_at = 0.0
+        self._last_background_notify_text = ""
         
         # Tools from the agent that subagents can use (not the cortex)
         self._available_tools: Dict[str, tuple] = {}
@@ -287,35 +293,78 @@ class ActorSystem:
         self._principal_monitor_task = asyncio.create_task(_monitor(), name="actor-principal-monitor")
 
     async def _handle_principal_message(self, message: ActorMessage):
-        """Process child->principal updates when cortex isn't explicitly waiting."""
+        """Record child->principal updates without bypassing cortex."""
         content = (message.content or "").strip()
+        metadata = message.metadata or {}
         sender = self.registry.get(message.sender)
-        sender_name = sender.config.name if sender else ""
-        # DMN has a direct callback path already; avoid duplicate user sends.
-        if content.startswith("[USER_NOTIFY]"):
+        sender_name = sender.config.name if sender else message.sender
+        # Route stays actor->cortex; cortex decides whether/how to message the user.
+        if self.principal:
+            self.registry.emit_event(
+                "principal_update_received",
+                self.principal,
+                {
+                    "from_actor_id": message.sender,
+                    "from_actor_name": sender_name,
+                    "message_id": message.id,
+                    "content_preview": content[:240],
+                    "channel": metadata.get("channel", ""),
+                    "kind": metadata.get("kind", ""),
+                },
+            )
+        logger.debug(
+            "Principal update received from %s (%s): %s",
+            sender_name,
+            message.sender,
+            content[:180],
+        )
+
+        # Background processes can ask cortex to notify the user.
+        # Forward explicit metadata channel with cooldown/de-dupe to avoid spam.
+        if metadata.get("channel") != "user_notify":
+            return
+        if sender_name not in {"dmn", "amygdala"}:
             return
 
-        # Routine DMN round completion/progress should NOT be pushed to the user.
-        # DMN can still escalate via [USER_NOTIFY], and failures are forwarded.
-        if sender_name in {"dmn", "amygdala"}:
-            if content.startswith("[FAILED]"):
-                should_notify = True
-            else:
-                return
-        else:
-            should_notify = False
-            if content.startswith("[FAILED]"):
-                should_notify = True
-            elif content.startswith("[DONE]"):
-                should_notify = True
-            elif content.startswith("[PROGRESS]"):
-                should_notify = False
+        notify_text = content
+        if not notify_text:
+            return
 
-        if should_notify and self._send_to_user:
+        now = time.time()
+        seconds_since_last = now - self._last_background_notify_at
+        is_duplicate = notify_text == self._last_background_notify_text
+        if seconds_since_last < BACKGROUND_NOTIFY_COOLDOWN_SECONDS or is_duplicate:
+            if self.principal:
+                self.registry.emit_event(
+                    "background_notify_suppressed",
+                    self.principal,
+                    {
+                        "from_actor_id": message.sender,
+                        "from_actor_name": sender_name,
+                        "seconds_since_last": int(seconds_since_last),
+                        "is_duplicate": is_duplicate,
+                        "message_preview": notify_text[:240],
+                    },
+                )
+            return
+
+        if self._send_to_user:
             try:
-                await self._send_to_user(content)
+                await self._send_to_user(notify_text)
+                self._last_background_notify_at = now
+                self._last_background_notify_text = notify_text
+                if self.principal:
+                    self.registry.emit_event(
+                        "background_notify_forwarded",
+                        self.principal,
+                        {
+                            "from_actor_id": message.sender,
+                            "from_actor_name": sender_name,
+                            "message_preview": notify_text[:240],
+                        },
+                    )
             except Exception as e:
-                logger.warning(f"Failed to forward principal update to user: {e}")
+                logger.warning("Failed to forward background notify to user: %s", e)
 
     def set_callbacks(
         self,

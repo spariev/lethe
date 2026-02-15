@@ -57,7 +57,8 @@ Each round:
 <rules>
 - You are NOT user-facing
 - Send messages to cortex ONLY for urgent/actionable items
-- If user delivery is needed, send_message(cortex_id, "[USER_NOTIFY] <message>") explicitly
+- If user delivery is needed, use structured channel metadata:
+  send_message(cortex_id, "<message>", channel="user_notify", kind="insight")
 - Avoid spam
 - Keep state concise (under 50 lines)
 - ALWAYS use absolute paths starting with {workspace}/

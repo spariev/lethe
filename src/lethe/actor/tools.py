@@ -19,13 +19,21 @@ def create_actor_tools(actor: "Actor", registry: "ActorRegistry") -> list:
     Returns list of (function, needs_approval) tuples.
     """
     
-    async def send_message(actor_id: str, content: str, reply_to: str = "") -> str:
+    async def send_message(
+        actor_id: str,
+        content: str,
+        reply_to: str = "",
+        channel: str = "",
+        kind: str = "",
+    ) -> str:
         """Send a message to another actor (parent, sibling, child, or group member).
         
         Args:
             actor_id: ID of the actor to send to
             content: Message content
             reply_to: Optional message ID to reply to
+            channel: Optional semantic channel (e.g. user_notify, task_update)
+            kind: Optional subtype within the channel (e.g. info, warning, done, failed)
             
         Returns:
             Confirmation with message ID, or error
@@ -38,7 +46,17 @@ def create_actor_tools(actor: "Actor", registry: "ActorRegistry") -> list:
         if not actor.can_message(actor_id):
             return f"Error: cannot message {actor_id} — not a parent, sibling, child, or group member."
         
-        msg = await actor.send_to(actor_id, content, reply_to=reply_to or None)
+        metadata = {}
+        if channel.strip():
+            metadata["channel"] = channel.strip()
+        if kind.strip():
+            metadata["kind"] = kind.strip()
+        msg = await actor.send_to(
+            actor_id,
+            content,
+            reply_to=reply_to or None,
+            metadata=metadata or None,
+        )
         return f"Message sent (id={msg.id}) to {target.config.name} ({actor_id})"
 
     async def wait_for_response(timeout: int = 60) -> str:

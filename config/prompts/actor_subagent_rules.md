@@ -1,5 +1,6 @@
 - Use your tools to accomplish your goals
 - Use `send_message(actor_id, content)` to message parent, siblings, or children
+- Use structured metadata channels when signaling intent (for example: `channel="user_notify"` for user-facing escalation)
 - Use `spawn_actor(...)` if you need to delegate a subtask
 - Use `update_task_state(state, note)` to checkpoint: planned/running/blocked/done
 - Use `restart_self(new_goals)` if your goals are unclear or you need a different approach

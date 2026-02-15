@@ -88,10 +88,10 @@ class Amygdala:
         for m in messages:
             if m.recipient != cortex_id or m.sender == cortex_id:
                 continue
+            if m.metadata.get("channel") != "user_notify":
+                continue
             text = (m.content or "").strip()
-            if text.startswith("[USER_NOTIFY]"):
-                candidates.append(text[len("[USER_NOTIFY]"):].strip())
-            elif text.startswith("[AMYGDALA_ALERT]"):
+            if text:
                 candidates.append(text)
         return candidates[-1] if candidates else None
 
