@@ -40,9 +40,9 @@ COPY pyproject.toml uv.lock ./
 COPY src/ ./src/
 COPY config/ ./config/
 
-# Install dependencies (CPU-only PyTorch to save ~2GB)
-ENV UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
-RUN uv sync --frozen --index-strategy unsafe-best-match
+# Install runtime dependencies only (skip dev group in container image)
+# Torch CPU index is already configured explicitly in pyproject via [tool.uv.sources].
+RUN uv sync --frozen --no-dev
 
 # Copy entrypoint
 COPY entrypoint.sh /entrypoint.sh
