@@ -272,6 +272,8 @@ async def run():
                     lethe_console.update_hippocampus_context(agent.hippocampus.get_context_view())
                     if actor_system:
                         lethe_console.update_actor_status(actor_system.status)
+                        if actor_system.brainstem:
+                            lethe_console.update_stem_context(actor_system.brainstem.get_context_view())
                         if actor_system.dmn:
                             lethe_console.update_dmn_context(actor_system.dmn.get_context_view())
                         if actor_system.amygdala:

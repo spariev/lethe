@@ -415,3 +415,49 @@ async def test_brainstem_auto_update_success_notifies_user_offer_restart(monkeyp
     notify_text = brainstem._send_user_notify.await_args.args[0]
     assert "v9.9.9" in notify_text
     assert "restart" in notify_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_brainstem_auto_update_dirty_repo_uses_backup_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    workspace = tmp_path / "workspace"
+    memory = tmp_path / "memory"
+    config_dir = tmp_path / "config"
+    db_parent = tmp_path / "data"
+    workspace.mkdir()
+    memory.mkdir()
+    config_dir.mkdir()
+    db_parent.mkdir()
+
+    settings = Settings(
+        telegram_bot_token="test-token",
+        telegram_allowed_user_ids="1",
+        workspace_dir=workspace,
+        memory_dir=memory,
+        lethe_config_dir=config_dir,
+        db_path=db_parent / "lethe.db",
+    )
+
+    registry = ActorRegistry()
+    cortex = registry.spawn(ActorConfig(name="cortex", group="main", goals="serve"), is_principal=True)
+    brainstem = Brainstem(
+        registry=registry,
+        settings=settings,
+        cortex_id=cortex.id,
+        install_dir=str(tmp_path),
+    )
+    brainstem.auto_update_enabled = True
+    brainstem._seen_release_tag = ""
+    brainstem._repo_dirty = lambda: True
+    brainstem._run_update_script = AsyncMock(return_value=(True, "updated"))
+    brainstem._send_task_update = AsyncMock()
+    brainstem._send_user_notify = AsyncMock()
+
+    (tmp_path / "update.sh").write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
+
+    await brainstem._maybe_auto_update("v9.9.9")
+
+    brainstem._run_update_script.assert_awaited_once()
+    texts = [call.args[0] for call in brainstem._send_task_update.await_args_list if call.args]
+    assert any("safety backup" in str(t).lower() for t in texts)

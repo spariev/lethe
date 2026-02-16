@@ -296,26 +296,75 @@ update_native() {
     local target_version="$2"
     
     cd "$install_dir"
+
+    local stash_ref=""
+    local stash_label=""
+    local dirty=""
+    dirty="$(git status --porcelain 2>/dev/null || true)"
+    if [ -n "$dirty" ]; then
+        stash_label="lethe-update-backup-$(date +%Y%m%d-%H%M%S)"
+        warn "Local changes detected. Creating safety stash before update..."
+        git stash push --include-untracked -m "$stash_label" >/dev/null
+        stash_ref="$(git stash list --format='%gd %s' | awk -v label="$stash_label" '$0 ~ label {print $1; exit}')"
+        if [ -n "$stash_ref" ]; then
+            success "Backup created: $stash_ref"
+        else
+            warn "Backup stash created, but reference lookup failed (label: $stash_label)"
+        fi
+    fi
+
+    restore_stash_on_failure() {
+        if [ -z "$stash_ref" ]; then
+            return
+        fi
+        warn "Update failed. Attempting to restore local changes from $stash_ref..."
+        if git stash pop --index "$stash_ref" >/dev/null 2>&1; then
+            success "Local changes restored from $stash_ref"
+        else
+            warn "Could not auto-restore stash cleanly. Backup remains in stash list ($stash_ref)."
+            warn "Restore manually with: git -C $install_dir stash pop --index $stash_ref"
+        fi
+    }
     
     info "Fetching updates..."
-    git fetch origin --tags
+    if ! git fetch origin --tags; then
+        restore_stash_on_failure
+        return 1
+    fi
     
     if [ "$target_version" != "main" ]; then
-        git checkout "$target_version"
+        if ! git checkout "$target_version"; then
+            restore_stash_on_failure
+            return 1
+        fi
     else
-        git checkout main
-        git pull origin main
+        if ! git checkout main; then
+            restore_stash_on_failure
+            return 1
+        fi
+        if ! git pull origin main; then
+            restore_stash_on_failure
+            return 1
+        fi
     fi
     
     # Update dependencies
     info "Updating dependencies..."
     if command -v uv &>/dev/null; then
-        uv sync
+        if ! uv sync; then
+            restore_stash_on_failure
+            return 1
+        fi
     fi
 
     local workspace_dir
     workspace_dir=$(detect_workspace_dir)
     sync_prompt_templates "$install_dir" "$workspace_dir"
+
+    if [ -n "$stash_ref" ]; then
+        warn "Local pre-update changes were backed up to $stash_ref"
+        warn "Reapply manually if needed: git -C $install_dir stash pop --index $stash_ref"
+    fi
     
     success "Code updated to $target_version"
 }

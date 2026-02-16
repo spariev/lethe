@@ -272,7 +272,7 @@ class ConsoleUI:
         self._last_version = 0
         self._block_counter = 0
         self._start_time = datetime.now(timezone.utc)
-        self._active_context_tab = "LLM"
+        self._active_context_tab = "Cortex"
         self._setup_ui()
     
     def _setup_ui(self):
@@ -333,17 +333,22 @@ class ConsoleUI:
                             self.ctx_info = ui.html('<span class="mc-meta"></span>')
                         with ui.element("div").classes("mc-tab-shell"):
                             with ui.tabs().classes("w-full") as ctx_tabs:
-                                tab_llm = ui.tab("LLM")
+                                tab_cortex = ui.tab("Cortex")
+                                tab_stem = ui.tab("Stem")
                                 tab_dmn = ui.tab("DMN")
                                 tab_amygdala = ui.tab("Amygdala")
                                 tab_hippo = ui.tab("Hippocampus")
                             self.ctx_tabs = ctx_tabs
                             self.ctx_tabs.on("update:model-value", self._on_context_tab_change)
-                            with ui.tab_panels(ctx_tabs, value=tab_llm).classes("mc-tab-panels"):
-                                with ui.tab_panel(tab_llm).classes("mc-tab-panel"):
+                            with ui.tab_panels(ctx_tabs, value=tab_cortex).classes("mc-tab-panels"):
+                                with ui.tab_panel(tab_cortex).classes("mc-tab-panel"):
                                     self.ctx_scroll = ui.element("div").classes("mc-tab-scroll")
                                     with self.ctx_scroll:
                                         self.ctx_container = ui.element("div").classes("w-full")
+                                with ui.tab_panel(tab_stem).classes("mc-tab-panel"):
+                                    self.stem_ctx_scroll = ui.element("div").classes("mc-tab-scroll")
+                                    with self.stem_ctx_scroll:
+                                        self.stem_ctx_container = ui.element("div").classes("w-full")
                                 with ui.tab_panel(tab_dmn).classes("mc-tab-panel"):
                                     self.dmn_ctx_scroll = ui.element("div").classes("mc-tab-scroll")
                                     with self.dmn_ctx_scroll:
@@ -662,9 +667,14 @@ class ConsoleUI:
             )
         
         # Cache stats
-        if state.last_prompt_tokens and state.last_cache_read:
-            pct = int(100 * state.last_cache_read / state.last_prompt_tokens) if state.last_prompt_tokens else 0
-            parts.append(f'CACHE <b class="green">{pct}%</b> ({state.last_cache_read:,} hit)')
+        if state.last_cache_read:
+            uncached = int(state.last_prompt_tokens or 0)
+            cached = int(state.last_cache_read or 0)
+            # prompt_tokens can represent only uncached input for some providers.
+            # Use total input (cached + uncached) so hit rate is bounded to [0, 100].
+            total_input = cached + max(0, uncached)
+            pct = int(round((100 * cached / total_input), 0)) if total_input > 0 else 0
+            parts.append(f'CACHE <b class="green">{pct}%</b> ({cached:,} hit)')
         elif state.last_cache_write:
             parts.append(f'CACHE <b class="amber">{state.last_cache_write:,}</b> write')
         if state.cache_read_tokens:
@@ -864,13 +874,22 @@ class ConsoleUI:
         return max(1, int(len(text) / 4))
 
     def _on_context_tab_change(self, e):
-        tab = str(getattr(e, "args", "") or "LLM")
+        tab = str(getattr(e, "args", "") or "Cortex")
         if tab:
             self._active_context_tab = tab
         self._update_context_info(get_state())
 
     def _update_context_info(self, state):
         tab = self._active_context_tab
+        if tab == "Stem":
+            text = state.stem_context or ""
+            tok = self._estimate_tokens(text)
+            self.ctx_info._props["innerHTML"] = (
+                f'<span class="mc-meta">Stem <b class="accent">~{tok:,}</b> tok '
+                f'(<b>{len(text):,}</b> chars)</span>'
+            )
+            self.ctx_info.update()
+            return
         if tab == "DMN":
             text = state.dmn_context or ""
             tok = self._estimate_tokens(text)
@@ -901,11 +920,11 @@ class ConsoleUI:
         if state.last_context_time:
             time_str = state.last_context_time.strftime("%H:%M:%S")
             self.ctx_info._props["innerHTML"] = (
-                f'<span class="mc-meta">LLM <b class="accent">{state.last_context_tokens:,}</b> '
+                f'<span class="mc-meta">Cortex <b class="accent">{state.last_context_tokens:,}</b> '
                 f'tokens @ {time_str}</span>'
             )
         else:
-            self.ctx_info._props["innerHTML"] = '<span class="mc-meta">LLM <b class="accent">0</b> tokens</span>'
+            self.ctx_info._props["innerHTML"] = '<span class="mc-meta">Cortex <b class="accent">0</b> tokens</span>'
         self.ctx_info.update()
     
     # ── Data loading ──────────────────────────────────────────
@@ -948,6 +967,9 @@ class ConsoleUI:
                 ctx_html.append(self._render_context_msg_html(msg))
         self.ctx_container._props["innerHTML"] = "\n".join(ctx_html) if ctx_html else '<div class="mc-empty">No context captured yet</div>'
         self.ctx_container.update()
+
+        self.stem_ctx_container._props["innerHTML"] = self._render_text_panel("Stem", state.stem_context)
+        self.stem_ctx_container.update()
 
         self.dmn_ctx_container._props["innerHTML"] = self._render_text_panel("DMN", state.dmn_context)
         self.dmn_ctx_container.update()

@@ -44,3 +44,13 @@ workspace/
 
 # Debug logs
 logs/
+
+# Runtime artifacts (when install dir is accidentally used as workspace)
+dmn_state.md
+ideas.md
+questions.md
+amygdala_state.md
+emotional_tags.md
+.dmn_state_reset_v1
+epost/
+browser/

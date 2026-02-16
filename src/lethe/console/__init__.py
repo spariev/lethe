@@ -76,9 +76,11 @@ class ConsoleState:
     dmn: Dict[str, Any] = field(default_factory=dict)
     amygdala: Dict[str, Any] = field(default_factory=dict)
     hippocampus: Dict[str, Any] = field(default_factory=dict)
+    stem: Dict[str, Any] = field(default_factory=dict)
     dmn_context: str = ""
     amygdala_context: str = ""
     hippocampus_context: str = ""
+    stem_context: str = ""
     
     # Change tracking (incremented on data changes that need UI rebuild)
     version: int = 0
@@ -295,38 +297,41 @@ def track_cache_usage(usage: dict):
     - OpenRouter unified: prompt_tokens_details.cached_tokens, cache_write_tokens
     - Moonshot/Kimi: automatic caching, same unified format
     """
-    # OpenRouter unified format
-    details = usage.get("prompt_tokens_details", {})
-    if details:
-        cached = details.get("cached_tokens", 0)
-        written = details.get("cache_write_tokens", 0)
-        if cached:
-            _state.last_cache_read = cached
-            _state.cache_read_tokens += cached
-        if written:
-            _state.last_cache_write = written
-            _state.cache_write_tokens += written
-    
-    # Anthropic direct format (via litellm)
-    cache_read = usage.get("cache_read_input_tokens", 0)
-    cache_write = usage.get("cache_creation_input_tokens", 0)
+    # Keep one normalized pair per request to avoid double counting when both
+    # provider-native and unified fields are present in the same payload.
+    details = usage.get("prompt_tokens_details", {}) or {}
+    direct_read = int(usage.get("cache_read_input_tokens", 0) or 0)
+    direct_write = int(usage.get("cache_creation_input_tokens", 0) or 0)
+    unified_read = int(details.get("cached_tokens", 0) or 0)
+    unified_write = int(details.get("cache_write_tokens", 0) or 0)
+
+    cache_read = direct_read if direct_read > 0 else unified_read
+    cache_write = direct_write if direct_write > 0 else unified_write
+
+    _state.last_cache_read = cache_read
+    _state.last_cache_write = cache_write
     if cache_read:
-        _state.last_cache_read = cache_read
         _state.cache_read_tokens += cache_read
     if cache_write:
-        _state.last_cache_write = cache_write
         _state.cache_write_tokens += cache_write
-    
-    _state.last_prompt_tokens = usage.get("prompt_tokens", 0)
+
+    _state.last_prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
 
 
 def update_actor_status(status: dict):
     """Update actor-system monitoring details."""
     status = status or {}
+    stem = status.get("brainstem", {})
     dmn = status.get("dmn", {})
     amygdala = status.get("amygdala", {})
-    if _state.actor_system != status or _state.dmn != dmn or _state.amygdala != amygdala:
+    if (
+        _state.actor_system != status
+        or _state.stem != stem
+        or _state.dmn != dmn
+        or _state.amygdala != amygdala
+    ):
         _state.actor_system = status
+        _state.stem = stem
         _state.dmn = dmn
         _state.amygdala = amygdala
         _state.version += 1
@@ -361,6 +366,14 @@ def update_amygdala_context(context: str):
     context = context or ""
     if _state.amygdala_context != context:
         _state.amygdala_context = context
+        _state.version += 1
+
+
+def update_stem_context(context: str):
+    """Update brainstem context/debug view text."""
+    context = context or ""
+    if _state.stem_context != context:
+        _state.stem_context = context
         _state.version += 1
 
 

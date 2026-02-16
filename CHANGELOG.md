@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## v0.10.3 - 2026-02-16
+
+### Changed
+- Native updater now handles dirty repositories safely by creating a git-stash backup (including untracked files) before update, with automatic restore on failure and explicit recovery instructions.
+- Brainstem auto-update no longer hard-skips dirty repos; it proceeds through the updater backup path and reports that behavior to cortex.
+- Console context tabs updated: `LLM` renamed to `Cortex`, and a new `Stem` tab added for Brainstem context monitoring.
+
+### Fixed
+- Cache hit percentage in web console is now bounded and computed from total input (cached + uncached), preventing impossible values above 100%.
+- Cache read/write totals are no longer double-counted when both unified and provider-native usage fields are present.
+- Runtime artifact hygiene improved via `.gitignore` updates to reduce accidental install-repo dirtiness.
+
 ## v0.10.2 - 2026-02-16
 
 ### Added

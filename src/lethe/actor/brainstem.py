@@ -362,10 +362,12 @@ class Brainstem:
 
         if self._repo_dirty():
             await self._send_task_update(
-                f"Brainstem: update {latest_tag} detected, skipped due to local uncommitted changes.",
-                kind="update_skipped",
+                (
+                    f"Brainstem: update {latest_tag} detected with local changes present; "
+                    "proceeding via update.sh with safety backup (git stash)."
+                ),
+                kind="update_backup",
             )
-            return
 
         self._status["last_update_attempt_at"] = _now_iso()
         await self._send_task_update(
@@ -502,3 +504,53 @@ class Brainstem:
             warnings.append("repository has local uncommitted changes")
 
         return {"ok": not issues, "issues": issues, "warnings": warnings}
+
+    def get_context_view(self, max_history: int = 10) -> str:
+        """Build a dashboard-friendly Brainstem context snapshot."""
+        status = self.status
+        resources = status.get("last_resource_snapshot", {}) or {}
+        integrity = status.get("last_integrity", {}) or {}
+        history = list(status.get("history", []))[-max_history:]
+
+        lines = [
+            "# Brainstem Context",
+            "",
+            f"- state: {status.get('state', 'idle')}",
+            f"- started_at: {status.get('started_at') or '-'}",
+            f"- last_heartbeat_at: {status.get('last_heartbeat_at') or '-'}",
+            f"- heartbeat_count: {int(status.get('heartbeat_count', 0) or 0)}",
+            f"- current_version: {status.get('current_version') or '-'}",
+            f"- latest_release: {status.get('latest_release') or '-'}",
+            f"- update_available: {bool(status.get('update_available', False))}",
+            f"- auto_update_enabled: {bool(status.get('auto_update_enabled', False))}",
+            f"- release_checks_enabled: {bool(status.get('release_checks_enabled', False))}",
+            f"- last_update_attempt_at: {status.get('last_update_attempt_at') or '-'}",
+            f"- last_update_result: {status.get('last_update_result') or '-'}",
+            f"- last_error: {status.get('last_error') or '-'}",
+            "",
+            "## Resources",
+            f"- tokens_today: {int(resources.get('tokens_today', 0) or 0)}",
+            f"- tokens_per_hour: {int(resources.get('tokens_per_hour', 0) or 0)}",
+            f"- api_calls_per_hour: {int(resources.get('api_calls_per_hour', 0) or 0)}",
+            f"- process_rss_mb: {int(resources.get('process_rss_mb', 0) or 0)}",
+            f"- workspace_free_gb: {resources.get('workspace_free_gb', 0.0)}",
+            f"- auth_mode: {resources.get('auth_mode', 'unknown')}",
+            "",
+            "## Integrity",
+            f"- ok: {bool(integrity.get('ok', True))}",
+            f"- issues: {len(integrity.get('issues', []) or [])}",
+            f"- warnings: {len(integrity.get('warnings', []) or [])}",
+            "",
+            "## Recent Cycles",
+        ]
+        if not history:
+            lines.append("- (no cycles yet)")
+        else:
+            for item in history[::-1]:
+                at = item.get("at", "-")
+                trigger = item.get("trigger", "-")
+                summary = str(item.get("summary", "")).strip()
+                if len(summary) > 240:
+                    summary = summary[:240] + "..."
+                lines.append(f"- {at} [{trigger}] {summary or '(no summary)'}")
+        return "\n".join(lines)
