@@ -28,6 +28,10 @@ warn() {
     echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
+check_command() {
+    command -v "$1" >/dev/null 2>&1
+}
+
 prompt_read() {
     local prompt="$1"
     local var_name="$2"
@@ -53,6 +57,58 @@ detect_os() {
             echo "unknown"
             ;;
     esac
+}
+
+PODMAN_MACHINE_STARTED_BY_UNINSTALL=false
+PODMAN_MACHINE_NAME=""
+
+ensure_podman_ready_on_mac() {
+    if [[ "$OS" != "mac" ]]; then
+        return 0
+    fi
+    if ! check_command podman; then
+        return 1
+    fi
+    if podman info >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local candidate=""
+    local state=""
+    local name=""
+
+    for name in $(podman machine list --quiet 2>/dev/null); do
+        state="$(podman machine inspect "$name" --format '{{.State}}' 2>/dev/null || true)"
+        if [[ "$state" == "running" || "$state" == "Running" ]]; then
+            candidate="$name"
+            break
+        fi
+        if [[ -z "$candidate" ]]; then
+            candidate="$name"
+        fi
+    done
+
+    if [[ -z "$candidate" ]]; then
+        warn "Podman is installed, but no Podman machine exists."
+        return 1
+    fi
+
+    info "Starting Podman machine ($candidate) for cleanup..."
+    if podman machine start "$candidate" >/dev/null 2>&1; then
+        PODMAN_MACHINE_STARTED_BY_UNINSTALL=true
+        PODMAN_MACHINE_NAME="$candidate"
+        return 0
+    fi
+
+    warn "Could not start Podman machine ($candidate). Skipping Podman container cleanup."
+    return 1
+}
+
+cleanup_podman_machine_after_uninstall() {
+    if [[ "$PODMAN_MACHINE_STARTED_BY_UNINSTALL" == "true" && -n "$PODMAN_MACHINE_NAME" ]]; then
+        info "Stopping Podman machine ($PODMAN_MACHINE_NAME)..."
+        podman machine stop "$PODMAN_MACHINE_NAME" >/dev/null 2>&1 || true
+    fi
 }
 
 echo -e "${RED}"
@@ -111,23 +167,52 @@ if [ -f "$HOME/Library/LaunchAgents/com.lethe.agent.plist" ]; then
 fi
 
 # Stop and remove container
-if command -v podman &>/dev/null; then
-    if podman ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^lethe$'; then
-        info "Removing Podman container..."
-        podman stop lethe 2>/dev/null || true
-        podman rm lethe 2>/dev/null || true
-        podman rmi lethe:latest 2>/dev/null || true
-        success "Podman container removed"
+if check_command podman; then
+    podman_ready=true
+    if [[ "$OS" == "mac" ]]; then
+        ensure_podman_ready_on_mac || podman_ready=false
+    fi
+
+    if [[ "$podman_ready" == "true" ]]; then
+        if podman ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^lethe$'; then
+            info "Removing Podman container..."
+            podman stop lethe 2>/dev/null || true
+            podman rm lethe 2>/dev/null || true
+            podman rmi lethe:latest 2>/dev/null || true
+            success "Podman container removed"
+        fi
     fi
 fi
 
-if command -v docker &>/dev/null; then
-    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^lethe$'; then
-        info "Removing Docker container..."
-        docker stop lethe 2>/dev/null || true
-        docker rm lethe 2>/dev/null || true
-        docker rmi lethe:latest 2>/dev/null || true
-        success "Docker container removed"
+if check_command docker; then
+    if docker info >/dev/null 2>&1; then
+        if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^lethe$'; then
+            info "Removing Docker container..."
+            docker stop lethe 2>/dev/null || true
+            docker rm lethe 2>/dev/null || true
+            docker rmi lethe:latest 2>/dev/null || true
+            success "Docker container removed"
+        fi
+    else
+        warn "Docker daemon is not reachable; skipped Docker container cleanup."
+        if [[ "$OS" == "mac" ]]; then
+            warn "Start Docker Desktop and rerun uninstall to remove Docker artifacts."
+        fi
+    fi
+fi
+
+if [[ "$OS" == "mac" ]] && check_command podman; then
+    default_machine="$(podman machine list --quiet 2>/dev/null | head -n 1 || true)"
+    if [[ -n "${default_machine:-}" ]]; then
+        echo ""
+        prompt_read "Remove Podman machine '$default_machine' too? [y/N] " remove_podman_vm
+        remove_podman_vm=${remove_podman_vm:-N}
+        if [[ "$remove_podman_vm" =~ ^[Yy]$ ]]; then
+            info "Removing Podman machine ($default_machine)..."
+            podman machine stop "$default_machine" >/dev/null 2>&1 || true
+            podman machine rm -f "$default_machine" >/dev/null 2>&1 || true
+            success "Podman machine removed"
+        fi
     fi
 fi
 
@@ -137,6 +222,8 @@ if [ -d "$INSTALL_DIR" ]; then
     rm -rf "$INSTALL_DIR"
     success "Installation directory removed"
 fi
+
+cleanup_podman_machine_after_uninstall
 
 echo ""
 success "Lethe has been uninstalled."
