@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 #
 # Lethe Uninstaller
 # Removes Lethe and all associated files
@@ -26,6 +26,15 @@ success() {
 
 warn() {
     echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+prompt_read() {
+    local prompt="$1"
+    local var_name="$2"
+    local value
+    printf "%s" "$prompt" > /dev/tty
+    IFS= read -r value < /dev/tty
+    eval "$var_name=\$value"
 }
 
 detect_os() {
@@ -63,7 +72,7 @@ echo "This will NOT remove:"
 echo "  - Your config: $CONFIG_DIR"
 echo "  - Your workspace: $WORKSPACE_DIR"
 echo ""
-read -p "Are you sure you want to uninstall Lethe? [y/N] " -n 1 -r < /dev/tty
+prompt_read "Are you sure you want to uninstall Lethe? [y/N] " REPLY
 echo ""
 
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -136,4 +145,4 @@ echo "Your config is preserved at:"
 echo "  $CONFIG_DIR - API tokens and settings"
 echo ""
 echo "To reinstall:"
-echo "  curl -fsSL https://lethe.gg/install | bash"
+echo "  curl -fsSL https://lethe.gg/install | zsh"

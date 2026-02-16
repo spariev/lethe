@@ -1,7 +1,7 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 #
 # Lethe Installer (local-first architecture)
-# Usage: curl -fsSL https://lethe.gg/install | bash
+# Usage: curl -fsSL https://lethe.gg/install | zsh
 #
 # Default: Container mode (Docker/Podman) - safe, limited to ~/lethe/
 # Options:
@@ -12,11 +12,18 @@
 
 set -euo pipefail
 
-# Require bash 4+ for associative arrays
-if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
-    echo "Error: This script requires bash 4.0 or later."
-    echo "On macOS, install with: brew install bash"
-    echo "Then run: /opt/homebrew/bin/bash install.sh"
+# Compatible shells: zsh (preferred on macOS) and bash 4+
+if [[ -n "${ZSH_VERSION:-}" ]]; then
+    :
+elif [[ -n "${BASH_VERSINFO:-}" ]]; then
+    if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+        echo "Error: This script requires bash 4.0 or later."
+        echo "On macOS, install with: brew install bash"
+        echo "Then run: /opt/homebrew/bin/bash install.sh"
+        exit 1
+    fi
+else
+    echo "Error: Unsupported shell. Run with zsh or bash."
     exit 1
 fi
 
@@ -84,6 +91,15 @@ info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 success() { echo -e "${GREEN}[OK]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+
+prompt_read() {
+    local prompt="$1"
+    local var_name="$2"
+    local value
+    printf "%s" "$prompt" > /dev/tty
+    IFS= read -r value < /dev/tty
+    eval "$var_name=\$value"
+}
 
 detect_os() {
     case "$(uname -s)" in
@@ -181,7 +197,7 @@ prompt_provider() {
         default_choice=3
     fi
     
-    read -p "Choose provider [1-3, default=$default_choice]: " choice < /dev/tty
+    prompt_read "Choose provider [1-3, default=$default_choice]: " choice
     choice=${choice:-$default_choice}
     
     case $choice in
@@ -201,7 +217,7 @@ prompt_model() {
     echo ""
     echo -e "${BLUE}Main model${NC} (for conversations):"
     echo -e "  Default: ${CYAN}$default_model${NC}"
-    read -p "  Press Enter for default, or enter custom: " custom_model < /dev/tty
+    prompt_read "  Press Enter for default, or enter custom: " custom_model
     
     if [ -n "$custom_model" ]; then
         SELECTED_MODEL="$custom_model"
@@ -212,7 +228,7 @@ prompt_model() {
     echo ""
     echo -e "${BLUE}Auxiliary model${NC} (for heartbeats, summarization - cheaper/faster):"
     echo -e "  Default: ${CYAN}$default_aux${NC}"
-    read -p "  Press Enter for default, or enter custom: " custom_aux < /dev/tty
+    prompt_read "  Press Enter for default, or enter custom: " custom_aux
     
     if [ -n "$custom_aux" ]; then
         SELECTED_MODEL_AUX="$custom_aux"
@@ -227,7 +243,7 @@ prompt_model() {
     echo ""
     echo -e "${BLUE}Custom API URL${NC} (for local/compatible providers like Ollama, vLLM, etc.):"
     echo -e "  Leave empty to use default provider URL"
-    read -p "  Custom API base URL (or Enter to skip): " custom_api_base < /dev/tty
+    prompt_read "  Custom API base URL (or Enter to skip): " custom_api_base
     
     if [ -n "$custom_api_base" ]; then
         SELECTED_API_BASE="$custom_api_base"
@@ -273,7 +289,7 @@ prompt_api_key() {
         echo "  1) Use existing key"
         echo "  2) Enter a new key"
         echo ""
-        read -p "Choose [1-2, default=1]: " choice < /dev/tty
+        prompt_read "Choose [1-2, default=1]: " choice
         choice=${choice:-1}
         
         if [[ "$choice" == "1" ]]; then
@@ -286,7 +302,7 @@ prompt_api_key() {
     echo -e "${BLUE}$key_name required${NC}"
     echo "   Get your key at: $key_url"
     echo ""
-    read -p "   $key_name: " API_KEY < /dev/tty
+    prompt_read "   $key_name: " API_KEY
     if [ -z "$API_KEY" ]; then
         error "$key_name is required"
     fi
@@ -316,7 +332,7 @@ prompt_telegram() {
         echo "   Bot Token: ${existing_token:0:10}...${existing_token: -5}"
         echo "   User ID: $existing_user_id"
         echo ""
-        read -p "   Use existing configuration? [Y/n]: " reuse_config < /dev/tty
+        prompt_read "   Use existing configuration? [Y/n]: " reuse_config
         reuse_config=${reuse_config:-Y}
         
         if [[ "$reuse_config" =~ ^[Yy] ]]; then
@@ -331,7 +347,7 @@ prompt_telegram() {
     echo -e "${BLUE}1. Telegram Bot Token${NC}"
     echo "   Create a bot: message @BotFather on Telegram → /newbot → copy the token"
     echo ""
-    read -p "   Telegram Bot Token: " TELEGRAM_TOKEN < /dev/tty
+    prompt_read "   Telegram Bot Token: " TELEGRAM_TOKEN
     if [ -z "$TELEGRAM_TOKEN" ]; then
         error "Telegram token is required"
     fi
@@ -341,7 +357,7 @@ prompt_telegram() {
     echo "   Message @userinfobot on Telegram - it replies with your ID (a number like 123456789)"
     echo "   This restricts the bot to only respond to you."
     echo ""
-    read -p "   Telegram User ID: " TELEGRAM_USER_ID < /dev/tty
+    prompt_read "   Telegram User ID: " TELEGRAM_USER_ID
     if [ -z "$TELEGRAM_USER_ID" ]; then
         error "Telegram User ID is required (security: prevents strangers from using your bot)"
     fi
@@ -705,7 +721,7 @@ detect_container_runtime() {
         echo "  1) Podman (recommended for rootless)"
         echo "  2) Docker"
         echo ""
-        read -p "Select container runtime [1]: " choice < /dev/tty
+        prompt_read "Select container runtime [1]: " choice
         choice=${choice:-1}
         
         if [[ "$choice" == "2" ]]; then

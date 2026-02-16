@@ -1,9 +1,9 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 #
 # Lethe Update Script
 # Checks for updates and applies them
 #
-# Usage: curl -fsSL https://lethe.gg/update | bash
+# Usage: curl -fsSL https://lethe.gg/update | zsh
 #
 # Container mode: clones to temp dir, rebuilds, restarts container
 # Native mode: updates install dir, restarts service
@@ -111,7 +111,7 @@ detect_install_dir() {
     fi
     
     # 2. Check if running from within install dir
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local script_dir="$(cd "$(dirname "$0")" && pwd)"
     if [ -f "$script_dir/pyproject.toml" ] && grep -q "lethe" "$script_dir/pyproject.toml" 2>/dev/null; then
         echo "$script_dir"
         return
