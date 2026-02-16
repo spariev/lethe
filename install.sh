@@ -766,6 +766,47 @@ install_deps_and_run() {
     success "Dependencies installed"
 }
 
+ensure_podman_ready_on_mac() {
+    if ! check_command podman; then
+        return 1
+    fi
+
+    if podman info >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local machine_name=""
+    machine_name="$(podman machine list --quiet 2>/dev/null | head -n 1 || true)"
+
+    if [[ -z "${machine_name:-}" ]]; then
+        info "Initializing Podman machine..."
+        podman machine init >/dev/null 2>&1 || true
+        machine_name="$(podman machine list --quiet 2>/dev/null | head -n 1 || true)"
+    fi
+
+    if [[ -z "${machine_name:-}" ]]; then
+        warn "Podman is installed, but no Podman machine is available."
+        return 1
+    fi
+
+    info "Starting Podman machine ($machine_name)..."
+    if ! podman machine start "$machine_name"; then
+        warn "Failed to start Podman machine ($machine_name)."
+        return 1
+    fi
+
+    local i
+    for i in 1 2 3 4 5; do
+        if podman info >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+
+    warn "Podman machine started but socket is still not reachable."
+    return 1
+}
+
 detect_container_runtime() {
     local OS=$(detect_os)
     local has_podman=false
@@ -773,6 +814,19 @@ detect_container_runtime() {
     
     command -v podman &>/dev/null && has_podman=true
     command -v docker &>/dev/null && has_docker=true
+
+    # Check if Podman backend is actually reachable
+    if $has_podman; then
+        if ! podman info &>/dev/null; then
+            if [[ "$OS" == "mac" ]]; then
+                warn "Podman command found but machine/socket is not ready"
+                ensure_podman_ready_on_mac || has_podman=false
+            else
+                warn "Podman command found but daemon not reachable"
+                has_podman=false
+            fi
+        fi
+    fi
     
     # Check if Docker daemon is actually reachable
     if $has_docker; then
@@ -838,6 +892,9 @@ install_container_runtime() {
     local OS=$(detect_os)
     
     if [[ -n "$CONTAINER_CMD" ]]; then
+        if [[ "$CONTAINER_CMD" == "podman" && "$OS" == "mac" ]]; then
+            ensure_podman_ready_on_mac || error "Podman is installed but not ready. Run 'podman machine init' and 'podman machine start'."
+        fi
         success "$CONTAINER_CMD found"
         return 0
     fi
