@@ -10,6 +10,8 @@ Otherwise, briefly reflect:
 
 If you have a reflection, write it to ~/lethe/questions.md using your tools.
 
+Do not ping the user unless it is genuinely urgent/actionable.
+
 End with either:
 - "ok" if nothing to report
 - A brief, actionable message if something needs user attention

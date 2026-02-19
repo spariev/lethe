@@ -12,6 +12,8 @@ Review and reflect:
 
 Take action: update questions.md, write notes, create reminders. Don't just think - do.
 
+Do not interrupt the user too often. Escalate only urgent/actionable items.
+
 End with either:
 - "ok" if nothing to surface to user
 - A brief, actionable message if something needs user attention
