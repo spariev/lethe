@@ -884,14 +884,23 @@ class ContextWindow:
                 content = f"{head}\n\n[... {original_len - keep:,} chars truncated ...]\n\n{tail}"
                 logger.warning(f"Truncated oversized message ({original_len:,} → {MAX_MESSAGE_CHARS:,} chars)")
 
-            # Wrap conversation content in clean role/timestamp markup.
-            if isinstance(content, str):
-                if msg.role == "assistant" and msg.tool_calls and not content.strip():
-                    content = self._wrap_conversation_text_block(msg, "<tool_call_scaffold />")
-                else:
-                    content = self._wrap_conversation_text_block(msg, content)
+            # Timestamp conversation messages.
+            # User/assistant: simple timestamp prefix (natural dialog, no XML noise).
+            # Tool messages: XML markup (need metadata like tool name, call ID).
+            if msg.role in ("user", "assistant") and isinstance(content, str):
+                ts = msg.format_timestamp()
+                if ts and content.strip():
+                    content = f"[{ts}] {content}"
+                elif msg.role == "assistant" and msg.tool_calls and not content.strip():
+                    # Tool-calling assistant with no text — leave as-is
+                    pass
+            elif msg.role == "tool" and isinstance(content, str):
+                content = self._wrap_conversation_text_block(msg, content)
             elif isinstance(content, list) and msg.role in ("user", "assistant"):
-                content = self._wrap_conversation_multimodal_block(msg, content)
+                # Multimodal: prepend timestamp as text block
+                ts = msg.format_timestamp()
+                if ts:
+                    content = [{"type": "text", "text": f"[{ts}]"}] + list(content)
             
             m = {"role": msg.role, "content": content}
             if msg.name:

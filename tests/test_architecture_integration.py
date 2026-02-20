@@ -124,9 +124,12 @@ def test_conversation_blocks_are_timestamped_and_marked(monkeypatch):
     context.add_message(Message(role="tool", content="ok", name="bash", tool_call_id="call-1", created_at=ts))
 
     built = context.build_messages()
-    assert '<user_block timestamp="Thu 2026-02-19 12:30:00 UTC">' in built[1]["content"]
-    assert '<assistant_block timestamp="Thu 2026-02-19 12:30:00 UTC">' in built[2]["content"]
-    assert '<tool_block timestamp="Thu 2026-02-19 12:30:00 UTC"' in built[3]["content"]
+    # User/assistant get simple timestamp prefix, not XML blocks
+    assert built[1]["content"].startswith("[Thu 2026-02-19 12:30:00 UTC] hello")
+    # Assistant with tool_calls has no text content — no timestamp
+    # Tool messages keep XML markup (need metadata)
+    assert '<tool_block' in built[3]["content"]
+    assert 'timestamp="Thu 2026-02-19 12:30:00 UTC"' in built[3]["content"]
 
 
 def test_idle_time_passed_marker_is_single_upsert(monkeypatch):

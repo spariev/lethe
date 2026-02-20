@@ -260,6 +260,7 @@ class MemoryStore:
             f"- now={self._format_timestamp(now)}",
             f"- memory_blocks_last_modified={self._format_timestamp(last_modified)}",
             f"- {message_count} previous messages between you and the user are stored in recall memory (use tools to access them)",
+            "- Timestamps on messages are for your reference only. Do not include timestamps in your responses.",
         ]
         if archival_count > 0:
             metadata_lines.append(f"- {archival_count} total memories you created are stored in archival memory (use tools to access them)")
