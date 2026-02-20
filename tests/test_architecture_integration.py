@@ -47,11 +47,49 @@ def test_transient_system_context_is_injected_only_in_system_role(monkeypatch):
 
     built = context.build_messages()
     assert built[0]["role"] == "system"
-    assert "<runtime_context source=\"hippocampus\">" in built[0]["content"]
+    # Non-Anthropic now uses structured content blocks (same as Anthropic)
+    system_content = built[0]["content"]
+    assert isinstance(system_content, list)
+    system_text = " ".join(b.get("text", "") for b in system_content)
+    assert "<runtime_context source=\"hippocampus\">" in system_text
+    # Runtime block should NOT have cache_control
+    runtime_blocks = [b for b in system_content if "runtime_context" in b.get("text", "")]
+    assert runtime_blocks
+    assert "cache_control" not in runtime_blocks[0]
     assert not any(
         m.get("role") == "assistant" and "runtime_context" in str(m.get("content", ""))
         for m in built[1:]
     )
+
+
+def test_non_anthropic_uses_structured_cache_control(monkeypatch):
+    """Non-Anthropic path should use structured content blocks with cache_control
+    so LiteLLM can translate caching directives per provider."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    config = LLMConfig(model="openrouter/moonshotai/kimi-k2.5-0127")
+    context = ContextWindow(
+        system_prompt="You are a test system",
+        memory_context="<memory_blocks>test</memory_blocks>",
+        config=config,
+    )
+    context.add_message(Message(role="user", content="hello"))
+
+    built = context.build_messages()
+    system_content = built[0]["content"]
+
+    # Should be structured blocks, not a plain string
+    assert isinstance(system_content, list), "Non-Anthropic should use structured content blocks"
+    assert len(system_content) >= 2, "Should have at least identity + memory blocks"
+
+    # Identity block should have cache_control
+    identity = system_content[0]
+    assert "cache_control" in identity
+    assert identity["cache_control"]["type"] == "ephemeral"
+
+    # Memory block should have cache_control
+    memory = system_content[1]
+    assert "cache_control" in memory
+    assert memory["cache_control"]["type"] == "ephemeral"
 
 
 def test_anthropic_transient_system_context_block_is_uncached(monkeypatch):

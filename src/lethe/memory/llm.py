@@ -737,23 +737,48 @@ class ContextWindow:
             
             messages = [{"role": "system", "content": system_content}]
         else:
-            # Non-Anthropic: single system string composed from marked blocks
-            parts = [identity_block]
+            # Non-Anthropic: structured content blocks with cache_control.
+            # LiteLLM translates cache_control directives per provider
+            # (OpenAI/Deepseek: automatic prefix caching, Gemini: context caching).
+            system_content = []
+            
+            # Block 1: identity/system instructions (stable, cacheable)
+            system_content.append({
+                "type": "text",
+                "text": identity_block,
+                "cache_control": {"type": "ephemeral"},
+            })
+            
+            # Block 2: memory context (volatile but cacheable)
             if memory_block:
-                parts.append(memory_block)
-            if self._tool_reference:
-                parts.append(
-                    self._render_system_block(
+                tools_text = ""
+                if self._tool_reference:
+                    tools_text = "\n\n" + self._render_system_block(
                         "available_tools_block",
                         self._tool_reference,
                         self.system_prompt_loaded_at,
                     )
-                )
+                system_content.append({
+                    "type": "text",
+                    "text": memory_block + tools_text,
+                    "cache_control": {"type": "ephemeral"},
+                })
+            
+            # Block 3: summary (uncached, changes frequently)
             if summary_block:
-                parts.append(summary_block)
+                system_content.append({
+                    "type": "text",
+                    "text": summary_block,
+                })
+            
+            # Block 4: runtime context (uncached, per-turn)
             if runtime_block:
-                parts.append(runtime_block)
-            messages = [{"role": "system", "content": "\n\n".join(parts)}]
+                system_content.append({
+                    "type": "text",
+                    "text": runtime_block,
+                })
+            
+            messages = [{"role": "system", "content": system_content}]
 
         # Ensure timeline order for all non-system messages.
         epoch = datetime.fromtimestamp(0, tz=timezone.utc)
