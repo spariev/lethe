@@ -124,6 +124,15 @@ async def run():
     # Initialize conversation manager
     conversation_manager = ConversationManager(debounce_seconds=settings.debounce_seconds)
     logger.info(f"Conversation manager initialized (debounce: {settings.debounce_seconds}s)")
+    heartbeat: Optional[Heartbeat] = None
+
+    def mark_user_visible_activity(reason: str) -> None:
+        """Reset synthetic idle state after real user-visible activity."""
+        removed = agent.llm.clear_idle_markers()
+        if removed:
+            logger.info("Cleared %d idle marker(s) after %s", removed, reason)
+        if heartbeat:
+            heartbeat.reset_idle_timer(reason)
 
     # Message processing callback
     async def process_message(chat_id: int, user_id: int, message: str, metadata: dict, interrupt_check):
@@ -131,6 +140,7 @@ async def run():
         from lethe.tools import set_telegram_context, set_last_message_id, clear_telegram_context
         
         logger.info(f"Processing message from {user_id}: {message[:50]}...")
+        mark_user_visible_activity("incoming user message")
         
         # Set telegram context for tools (reactions, sending messages)
         set_telegram_context(telegram_bot.bot, chat_id)
@@ -151,6 +161,7 @@ async def run():
                     return
                 # Send thinking/reasoning as-is (no emoji prefix)
                 await telegram_bot.send_message(chat_id, content)
+                mark_user_visible_activity("intermediate assistant update")
             
             # Callback for image attachments (screenshots, etc.)
             async def on_image(image_path: str):
@@ -158,6 +169,7 @@ async def run():
                 if interrupt_check():
                     return
                 await telegram_bot.send_photo(chat_id, image_path)
+                mark_user_visible_activity("assistant image update")
             
             # Get response from agent
             response = await agent.chat(message, on_message=on_intermediate, on_image=on_image)
@@ -170,10 +182,12 @@ async def run():
             # Send response
             logger.info(f"Sending response ({len(response)} chars): {response[:80]}...")
             await telegram_bot.send_message(chat_id, response)
+            mark_user_visible_activity("assistant final response")
             
         except Exception as e:
             logger.exception(f"Error processing message: {e}")
             await telegram_bot.send_message(chat_id, f"Error: {e}")
+            mark_user_visible_activity("assistant error response")
         finally:
             await telegram_bot.stop_typing(chat_id)
             clear_telegram_context()
@@ -214,6 +228,7 @@ async def run():
         """Send heartbeat response to user."""
         if heartbeat_chat_id:
             await telegram_bot.send_message(heartbeat_chat_id, response)
+            mark_user_visible_activity("proactive outbound message")
     
     async def heartbeat_summarize(prompt: str) -> str:
         """Summarize/evaluate heartbeat response before sending (uses aux model)."""

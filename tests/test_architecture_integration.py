@@ -11,6 +11,7 @@ from lethe.actor import ActorConfig, ActorRegistry
 from lethe.actor.brainstem import Brainstem
 from lethe.actor.integration import ActorSystem
 from lethe.config import Settings
+from lethe.heartbeat import Heartbeat
 from lethe.memory.llm import AsyncLLMClient, ContextWindow, LLMConfig, Message
 
 
@@ -150,6 +151,54 @@ def test_idle_time_passed_marker_is_single_upsert(monkeypatch):
     ]
     assert len(markers) == 1
     assert 'minutes="30"' in markers[0].content
+
+
+def test_idle_time_passed_markers_can_be_cleared(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    config = LLMConfig(model="openrouter/moonshotai/kimi-k2.5-0127")
+    context = ContextWindow(system_prompt="sys", memory_context="", config=config)
+
+    context.upsert_time_passed_block(360)
+    context.add_message(Message(role="user", content="hi"))
+    context.add_message(Message(role="assistant", content="hello"))
+
+    removed = context.clear_time_passed_blocks()
+    markers = [
+        m for m in context.messages
+        if m.role == "user" and isinstance(m.content, str) and "<time_passed_block " in m.content
+    ]
+    assert removed == 1
+    assert len(markers) == 0
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_idle_accumulator_resets_on_activity():
+    idle_minutes = []
+
+    async def process_callback(_: str) -> str:
+        return "ok"
+
+    async def send_callback(_: str):
+        return None
+
+    async def idle_callback(minutes: int):
+        idle_minutes.append(minutes)
+
+    heartbeat = Heartbeat(
+        process_callback=process_callback,
+        send_callback=send_callback,
+        idle_callback=idle_callback,
+        interval=15 * 60,
+    )
+
+    await heartbeat._send_heartbeat()  # First tick does not emit idle callback.
+    await heartbeat._send_heartbeat()
+    assert idle_minutes == [15]
+
+    heartbeat.reset_idle_timer("test activity")
+
+    await heartbeat._send_heartbeat()
+    assert idle_minutes == [15, 15]
 
 
 def test_transient_context_dropped_when_over_budget(monkeypatch):
