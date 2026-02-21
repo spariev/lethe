@@ -1,6 +1,6 @@
 # Lethe
 
-[![Release](https://img.shields.io/badge/release-v0.10.7-blue?style=flat-square)](https://github.com/atemerev/lethe/releases/tag/v0.10.7)
+[![Release](https://img.shields.io/badge/release-v0.10.8-blue?style=flat-square)](https://github.com/atemerev/lethe/releases/tag/v0.10.8)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Telegram](https://img.shields.io/badge/Telegram-bot-blue?style=flat-square&logo=telegram)](https://telegram.org)
@@ -285,6 +285,8 @@ Enable with `LETHE_CONSOLE=true`. Web dashboard on port 8777.
 | `WORKSPACE_DIR` | Agent workspace | `./workspace` |
 | `MEMORY_DIR` | Memory data storage | `./data/memory` |
 | `LETHE_CONSOLE` | Enable web console | `false` |
+| `LETHE_CONSOLE_HOST` | Console bind address | `127.0.0.1` |
+| `LETHE_CONSOLE_PORT` | Console port | `8777` |
 | `HEARTBEAT_INTERVAL` | Main heartbeat interval for DMN/Amygdala/Brainstem (seconds) | `900` |
 | `BACKGROUND_NOTIFY_COOLDOWN_SECONDS` | Minimum interval between forwarded Brainstem/DMN/Amygdala user notifications | `1800` |
 | `BRAINSTEM_AUTO_UPDATE` | Brainstem applies `update.sh` when a newer GitHub release is detected | `true` |
