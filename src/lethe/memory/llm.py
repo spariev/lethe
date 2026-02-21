@@ -311,41 +311,6 @@ class ContextWindow:
         attr_str = "".join(f' {k}="{cls._xml_attr(v)}"' for k, v in attrs.items())
         return f"<{tag}{attr_str}>\n{content}\n</{tag}>"
 
-    def _wrap_conversation_text_block(self, msg: Message, content: str) -> str:
-        """Wrap assistant/user/tool content in clean markup with timestamps."""
-        role_map = {
-            "assistant": "assistant_block",
-            "user": "user_block",
-            "tool": "tool_block",
-        }
-        tag = role_map.get(msg.role, "message_block")
-        attrs: Dict[str, Any] = {}
-        ts = msg.format_timestamp()
-        if ts:
-            attrs["timestamp"] = ts
-        if msg.role == "tool":
-            if msg.name:
-                attrs["tool"] = msg.name
-            if msg.tool_call_id:
-                attrs["tool_call_id"] = msg.tool_call_id
-        return self._render_system_block(tag, content, None, attrs)
-
-    def _wrap_conversation_multimodal_block(self, msg: Message, content: List[Dict]) -> List[Dict]:
-        """Wrap multimodal user/assistant messages with timestamped text delimiters."""
-        role_map = {
-            "assistant": "assistant_block",
-            "user": "user_block",
-        }
-        tag = role_map.get(msg.role, "message_block")
-        attrs: Dict[str, Any] = {"multimodal": "true"}
-        ts = msg.format_timestamp()
-        if ts:
-            attrs["timestamp"] = ts
-        attr_str = "".join(f' {k}="{self._xml_attr(v)}"' for k, v in attrs.items())
-        open_part = {"type": "text", "text": f"<{tag}{attr_str}>"}
-        close_part = {"type": "text", "text": f"</{tag}>"}
-        return [open_part] + list(content) + [close_part]
-
     def upsert_time_passed_block(self, minutes_passed: int):
         """Append or update a single idle-time marker in user role."""
         minutes = max(1, int(minutes_passed))
@@ -739,92 +704,57 @@ class ContextWindow:
             {"source": "runtime"},
         ) if self.transient_system_context else ""
 
-        if is_anthropic:
-            system_content = []
-            
-            # Block 1: identity/system instructions (stable)
-            system_content.append({
-                "type": "text",
-                "text": identity_block,
-                "cache_control": {"type": "ephemeral", "ttl": "1h"}
-            })
-            
-            # Block 2: memory context (volatile but cacheable)
-            if memory_block:
-                system_content.append({
-                    "type": "text",
-                    "text": memory_block,
-                    "cache_control": {"type": "ephemeral"}
-                })
-            
-            # Block 3: conversation summary (uncached)
-            if summary_block:
-                system_content.append({
-                    "type": "text",
-                    "text": summary_block
-                })
+        # Build structured system content blocks (both Anthropic and non-Anthropic).
+        # LiteLLM translates cache_control per provider; Anthropic gets longer TTL
+        # on identity since it rarely changes.
+        system_content = []
 
-            # Block 4: runtime/synthetic context (uncached)
-            if runtime_block:
-                system_content.append({
-                    "type": "text",
-                    "text": runtime_block,
-                })
-            
-            messages = [{"role": "system", "content": system_content}]
-        else:
-            # Non-Anthropic: structured content blocks with cache_control.
-            # LiteLLM translates cache_control directives per provider
-            # (OpenAI/Deepseek: automatic prefix caching, Gemini: context caching).
-            system_content = []
-            
-            # Block 1: identity/system instructions (stable, cacheable)
+        # Block 1: identity/system instructions (stable, cached)
+        identity_cache = {"type": "ephemeral", "ttl": "1h"} if is_anthropic else {"type": "ephemeral"}
+        system_content.append({
+            "type": "text",
+            "text": identity_block,
+            "cache_control": identity_cache,
+        })
+
+        # Block 2: memory context + tool reference (volatile, cached)
+        # Non-Anthropic models benefit from tool list in system prompt text;
+        # Anthropic models get tools via the separate tools parameter.
+        if memory_block:
+            block_text = memory_block
+            if not is_anthropic and self._tool_reference:
+                block_text += "\n\n" + self._render_system_block(
+                    "available_tools_block",
+                    self._tool_reference,
+                    self.system_prompt_loaded_at,
+                )
             system_content.append({
                 "type": "text",
-                "text": identity_block,
+                "text": block_text,
                 "cache_control": {"type": "ephemeral"},
             })
-            
-            # Block 2: memory context (volatile but cacheable)
-            if memory_block:
-                tools_text = ""
-                if self._tool_reference:
-                    tools_text = "\n\n" + self._render_system_block(
-                        "available_tools_block",
-                        self._tool_reference,
-                        self.system_prompt_loaded_at,
-                    )
-                system_content.append({
-                    "type": "text",
-                    "text": memory_block + tools_text,
-                    "cache_control": {"type": "ephemeral"},
-                })
-            
-            # Block 3: summary (uncached, changes frequently)
-            if summary_block:
-                system_content.append({
-                    "type": "text",
-                    "text": summary_block,
-                })
-            
-            # Block 4: runtime context (uncached, per-turn)
-            if runtime_block:
-                system_content.append({
-                    "type": "text",
-                    "text": runtime_block,
-                })
-            
-            messages = [{"role": "system", "content": system_content}]
+
+        # Block 3: conversation summary (uncached, changes on compaction)
+        if summary_block:
+            system_content.append({"type": "text", "text": summary_block})
+
+        # Block 4: runtime/transient context (uncached, per-turn)
+        if runtime_block:
+            system_content.append({"type": "text", "text": runtime_block})
+
+        messages = [{"role": "system", "content": system_content}]
 
         # Ensure timeline order for all non-system messages.
-        epoch = datetime.fromtimestamp(0, tz=timezone.utc)
-        timeline_messages = sorted(
-            self.messages,
-            key=lambda m: (
-                (m.created_at.replace(tzinfo=timezone.utc) if m.created_at and m.created_at.tzinfo is None
-                 else (m.created_at.astimezone(timezone.utc) if m.created_at else epoch))
-            ),
-        )
+        _epoch = datetime.fromtimestamp(0, tz=timezone.utc)
+        def _sort_ts(m: Message) -> datetime:
+            dt = m.created_at
+            if dt is None:
+                return _epoch
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+
+        timeline_messages = sorted(self.messages, key=_sort_ts)
 
         # Find indices of image messages (to keep only most recent)
         image_indices = []

@@ -547,7 +547,7 @@ class ActorSystem:
                     except Exception:
                         pass
                 text = " ".join(text.split())
-                return text[:220]
+                return text[:500]
 
             lines = []
             for item in user_messages[-8:]:

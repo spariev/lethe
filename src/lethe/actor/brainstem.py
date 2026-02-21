@@ -498,7 +498,7 @@ class Brainstem:
         result = "success" if ok else "failed"
         self._status["last_update_result"] = f"{result}: {output[:240]}"
         await self._send_task_update(
-            f"Brainstem: update {latest_tag} {result}. {output[:240]}",
+            f"Brainstem: update {latest_tag} {result}. {output}",
             kind="update_result",
         )
         if ok:
