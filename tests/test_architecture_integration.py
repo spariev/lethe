@@ -108,7 +108,7 @@ def test_anthropic_transient_system_context_block_is_uncached(monkeypatch):
     assert "cache_control" not in transient
 
 
-def test_conversation_blocks_are_timestamped_and_marked(monkeypatch):
+def test_conversation_messages_stay_plain(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     config = LLMConfig(model="openrouter/moonshotai/kimi-k2.5-0127")
     context = ContextWindow(system_prompt="sys", memory_context="", config=config)
@@ -124,12 +124,15 @@ def test_conversation_blocks_are_timestamped_and_marked(monkeypatch):
     context.add_message(Message(role="tool", content="ok", name="bash", tool_call_id="call-1", created_at=ts))
 
     built = context.build_messages()
-    # User/assistant get simple timestamp prefix, not XML blocks
-    assert built[1]["content"].startswith("[Thu 2026-02-19 12:30:00 UTC] hello")
-    # Assistant with tool_calls has no text content — no timestamp
-    # Tool messages keep XML markup (need metadata)
-    assert '<tool_block' in built[3]["content"]
-    assert 'timestamp="Thu 2026-02-19 12:30:00 UTC"' in built[3]["content"]
+    assert built[1]["role"] == "user"
+    assert built[1]["content"] == "hello"
+    assert built[2]["role"] == "assistant"
+    assert built[2]["content"] == "hi"
+    assert built[3]["role"] == "tool"
+    assert built[3]["content"] == "ok"
+    # No timestamp prefix or XML wrappers in conversation turns.
+    assert not built[1]["content"].startswith("[Thu 2026-02-19")
+    assert "<user_block" not in built[1]["content"]
 
 
 def test_idle_time_passed_marker_is_single_upsert(monkeypatch):
@@ -146,6 +149,21 @@ def test_idle_time_passed_marker_is_single_upsert(monkeypatch):
     ]
     assert len(markers) == 1
     assert 'minutes="30"' in markers[0].content
+
+
+def test_transient_context_dropped_when_over_budget(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    config = LLMConfig(
+        model="openrouter/moonshotai/kimi-k2.5-0127",
+        context_limit=2000,
+        max_output_tokens=500,
+    )
+    context = ContextWindow(system_prompt="sys", memory_context="mem", config=config)
+    context.transient_system_context = "<recall_block>" + ("x" * 6000) + "</recall_block>"
+
+    assert context.transient_system_context
+    context._drop_transient_if_over_budget()
+    assert context.transient_system_context == ""
 
 
 @pytest.mark.asyncio

@@ -253,28 +253,31 @@ class ContextWindow:
         base_count = len(text) // CHARS_PER_TOKEN
         return int(base_count * TOKEN_SAFETY_MARGIN)
     
-    def get_fixed_tokens(self) -> int:
+    def get_fixed_tokens(self, include_transient: bool = True) -> int:
         """Get tokens used by fixed content (including tool schemas)."""
-        return (
+        total = (
             self.count_tokens(self.system_prompt) +
             self.count_tokens(self.memory_context) +
             self.count_tokens(self.summary) +
-            self.count_tokens(self.transient_system_context) +
             self.count_tokens(self._tool_reference) +
             self.count_tokens(self._tool_schemas_text)
         )
+        if include_transient:
+            total += self.count_tokens(self.transient_system_context)
+        return total
     
-    def get_available_tokens(self) -> int:
+    def get_available_tokens(self, include_transient: bool = True, clamp: bool = True) -> int:
         """Get tokens available for messages."""
-        fixed_tokens = self.get_fixed_tokens()
+        fixed_tokens = self.get_fixed_tokens(include_transient=include_transient)
         # Reserve space for output
         available = self.config.context_limit - fixed_tokens - self.config.max_output_tokens
-        return max(0, available)
+        return max(0, available) if clamp else available
     
     def add_message(self, message: Message):
         """Add a message, summarizing old ones if needed."""
         self.messages.append(message)
-        self._compress_if_needed()
+        # Do not compact based on transient, per-turn synthetic context.
+        self._compress_if_needed(include_transient=False)
 
     @staticmethod
     def _format_block_timestamp(value: Optional[datetime]) -> str:
@@ -366,6 +369,22 @@ class ContextWindow:
                 return
 
         self.add_message(Message(role="user", content=content, created_at=now))
+
+    def _drop_transient_if_over_budget(self):
+        """Drop transient per-turn context if it would overflow the request budget.
+
+        Transient recall should never evict recent short-term conversation history.
+        """
+        if not self.transient_system_context:
+            return
+        available = self.get_available_tokens(include_transient=True, clamp=False)
+        if available >= 0:
+            return
+        logger.warning(
+            "Dropping transient system context (%d tokens over budget) to preserve recent timeline",
+            abs(available),
+        )
+        self.transient_system_context = ""
     
     def load_messages(self, messages: List[dict]):
         """Load existing messages from history (e.g., from database).
@@ -444,9 +463,9 @@ class ContextWindow:
         
         logger.info(f"Loaded {loaded_count} messages (skipped: {skipped_tool} tool, {skipped_empty} empty)")
         # Compress if needed after loading
-        self._compress_if_needed()
+        self._compress_if_needed(include_transient=False)
     
-    def _compress_if_needed(self):
+    def _compress_if_needed(self, include_transient: bool = False):
         """Summarize oldest messages using Letta-style sliding window.
         
         Approach:
@@ -455,7 +474,7 @@ class ContextWindow:
         3. Cutoff must be at assistant message boundary (avoid mid-conversation splits)
         4. Summarize messages before cutoff, keep messages after
         """
-        available = self.get_available_tokens()
+        available = self.get_available_tokens(include_transient=include_transient)
         total = sum(self.count_tokens(m.get_text_content()) for m in self.messages)
         
         # Check if compaction needed
@@ -884,23 +903,15 @@ class ContextWindow:
                 content = f"{head}\n\n[... {original_len - keep:,} chars truncated ...]\n\n{tail}"
                 logger.warning(f"Truncated oversized message ({original_len:,} → {MAX_MESSAGE_CHARS:,} chars)")
 
-            # Timestamp conversation messages.
-            # User/assistant: simple timestamp prefix (natural dialog, no XML noise).
-            # Tool messages: XML markup (need metadata like tool name, call ID).
-            if msg.role in ("user", "assistant") and isinstance(content, str):
-                ts = msg.format_timestamp()
-                if ts and content.strip():
-                    content = f"[{ts}] {content}"
-                elif msg.role == "assistant" and msg.tool_calls and not content.strip():
-                    # Tool-calling assistant with no text — leave as-is
+            # Keep conversation turns plain to avoid response-style contamination.
+            # Timestamps remain available via memory/recall system blocks and created_at ordering.
+            if isinstance(content, str):
+                if msg.role == "assistant" and msg.tool_calls and not content.strip():
+                    # Tool-calling assistant with no text content — keep as-is.
                     pass
-            elif msg.role == "tool" and isinstance(content, str):
-                content = self._wrap_conversation_text_block(msg, content)
             elif isinstance(content, list) and msg.role in ("user", "assistant"):
-                # Multimodal: prepend timestamp as text block
-                ts = msg.format_timestamp()
-                if ts:
-                    content = [{"type": "text", "text": f"[{ts}]"}] + list(content)
+                # Preserve multimodal payload as provided.
+                content = list(content)
             
             m = {"role": msg.role, "content": content}
             if msg.name:
@@ -1659,8 +1670,10 @@ class AsyncLLMClient:
     
     async def _call_api(self, source: str = "") -> Dict:
         """Make API call via litellm (or OAuth if enabled)."""
-        # Pre-flight: force compaction if context is too large
-        self.context._compress_if_needed()
+        # Pre-flight: compact based on stable context only.
+        self.context._compress_if_needed(include_transient=False)
+        # Never let transient recall force short-term history eviction.
+        self.context._drop_transient_if_over_budget()
         messages = self.context.build_messages()
         
         # Notify console of context build
@@ -1709,6 +1722,8 @@ class AsyncLLMClient:
     
     async def _call_api_no_tools(self, source: str = "") -> Dict:
         """Make API call without tools (for final response after hitting limit)."""
+        self.context._compress_if_needed(include_transient=False)
+        self.context._drop_transient_if_over_budget()
         messages = self.context.build_messages()
         
         logger.debug(f"API call (no tools): {len(messages)} messages")
