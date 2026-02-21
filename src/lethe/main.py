@@ -77,12 +77,13 @@ async def run():
 
     # Initialize console (mind state visualization) if enabled
     console_enabled = os.environ.get("LETHE_CONSOLE", "false").lower() == "true"
-    console_port = int(os.environ.get("LETHE_CONSOLE_PORT", 8080))
-    
+    console_port = int(os.environ.get("LETHE_CONSOLE_PORT", 8777))
+    console_host = os.environ.get("LETHE_CONSOLE_HOST", "127.0.0.1")
+
     if console_enabled:
         from lethe.console.ui import run_console
-        await run_console(port=console_port)
-        console.print(f"[cyan]Console[/cyan] running at http://localhost:{console_port}")
+        await run_console(port=console_port, host=console_host)
+        console.print(f"[cyan]Console[/cyan] running at http://{console_host}:{console_port}")
         
         # Initialize console state with current data
         lethe_console.update_stats(stats['total_messages'], stats['archival_memories'])
