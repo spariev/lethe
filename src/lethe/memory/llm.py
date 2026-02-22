@@ -18,6 +18,7 @@ from litellm import acompletion, completion
 
 from lethe.utils import strip_model_tags
 from lethe.memory.anthropic_oauth import AnthropicOAuth, is_oauth_available
+from lethe.memory.openai_oauth import OpenAIOAuth, is_oauth_available_openai
 from lethe.prompts import load_prompt_template
 
 logger = logging.getLogger(__name__)
@@ -141,11 +142,13 @@ class LLMConfig:
             if prefix and not self.model_aux.startswith(prefix):
                 self.model_aux = prefix + self.model_aux
         
-        # Verify API key exists (ANTHROPIC_AUTH_TOKEN is an alternative for Anthropic)
+        # Verify API key exists (OAuth tokens are alternatives for some providers).
         env_key = provider_config.get("env_key")
         if env_key and not os.environ.get(env_key):
             if self.provider == "anthropic" and os.environ.get("ANTHROPIC_AUTH_TOKEN"):
                 pass  # Bearer auth via ANTHROPIC_AUTH_TOKEN
+            elif self.provider == "openai" and is_oauth_available_openai():
+                pass  # OAuth token via OPENAI_AUTH_TOKEN or token file
             else:
                 raise ValueError(f"{env_key} not set")
         
@@ -169,6 +172,11 @@ class LLMConfig:
         if os.environ.get("ANTHROPIC_AUTH_TOKEN"):
             logger.info("Auto-detected provider: anthropic (via ANTHROPIC_AUTH_TOKEN)")
             return "anthropic"
+
+        # OpenAI OAuth token as fallback for OpenAI (Bearer auth)
+        if is_oauth_available_openai():
+            logger.info("Auto-detected provider: openai (via OPENAI OAuth token)")
+            return "openai"
         
         # Default
         return DEFAULT_PROVIDER
@@ -973,7 +981,7 @@ class AsyncLLMClient:
         self.context._summarizer = self._summarize_messages_sync
         
         # Auth mode: OAuth (subscription) takes priority over API key
-        self._oauth: Optional[AnthropicOAuth] = None
+        self._oauth: Optional[Any] = None
         if self.config.provider == "anthropic" and is_oauth_available():
             self._oauth = AnthropicOAuth()
             has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
@@ -981,8 +989,17 @@ class AsyncLLMClient:
                 logger.info("Auth: OAuth token AND API key both present — using OAuth (subscription)")
             else:
                 logger.info("Auth: using OAuth token (Claude Max/Pro subscription)")
+        elif self.config.provider == "openai" and is_oauth_available_openai():
+            self._oauth = OpenAIOAuth()
+            has_api_key = bool(os.environ.get("OPENAI_API_KEY"))
+            if has_api_key:
+                logger.info("Auth: OpenAI OAuth token AND API key both present — using OAuth")
+            else:
+                logger.info("Auth: using OpenAI OAuth token (ChatGPT Plus/Pro subscription)")
         elif self.config.provider == "anthropic":
             logger.info("Auth: using Anthropic API key")
+        elif self.config.provider == "openai":
+            logger.info("Auth: using OpenAI API key")
         
         logger.info(f"AsyncLLMClient initialized with model {self.config.model}")
     
