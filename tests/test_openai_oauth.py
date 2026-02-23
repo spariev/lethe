@@ -91,6 +91,31 @@ def test_openai_oauth_extract_instructions_from_system_messages():
     assert non_system == [{"role": "user", "content": "hello"}]
 
 
+def test_openai_oauth_normalize_messages_converts_image_url_object_to_string():
+    oauth = OpenAIOAuth(access_token="access-token")
+    normalized = oauth._normalize_messages(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "what is this?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/jpeg;base64,AAA"},
+                    },
+                ],
+            }
+        ]
+    )
+
+    assert normalized[0]["role"] == "user"
+    assert normalized[0]["content"][0] == {"type": "input_text", "text": "what is this?"}
+    assert normalized[0]["content"][1] == {
+        "type": "input_image",
+        "image_url": "data:image/jpeg;base64,AAA",
+    }
+
+
 def test_openai_oauth_parse_streamed_response_prefers_completed_event():
     oauth = OpenAIOAuth(access_token="access-token")
     sse = (

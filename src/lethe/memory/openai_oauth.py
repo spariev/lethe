@@ -303,6 +303,17 @@ class OpenAIOAuth:
             return ""
         return str(content)
 
+    @staticmethod
+    def _extract_image_url(image_value: Any) -> Optional[str]:
+        """Extract image URL string from multimodal block payloads."""
+        if isinstance(image_value, str) and image_value:
+            return image_value
+        if isinstance(image_value, dict):
+            url = image_value.get("url")
+            if isinstance(url, str) and url:
+                return url
+        return None
+
     def _normalize_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert Lethe/litellm chat messages into OpenAI Responses input items."""
         input_items: List[Dict[str, Any]] = []
@@ -365,8 +376,10 @@ class OpenAIOAuth:
                         text = block.get("text", "")
                         if text:
                             parts.append({"type": "input_text", "text": str(text)})
-                    elif block_type == "image_url" and block.get("image_url"):
-                        parts.append({"type": "input_image", "image_url": block.get("image_url")})
+                    elif block_type == "image_url":
+                        image_url = self._extract_image_url(block.get("image_url"))
+                        if image_url:
+                            parts.append({"type": "input_image", "image_url": image_url})
                 if parts:
                     input_items.append({"role": "user", "content": parts})
             elif content is not None:
