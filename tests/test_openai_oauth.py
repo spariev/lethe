@@ -5,7 +5,7 @@ import pytest
 from lethe.memory import openai_oauth
 from lethe.memory.llm import AsyncLLMClient, LLMConfig
 from lethe.memory.openai_oauth import OpenAIOAuth, is_oauth_available_openai
-from lethe.tools import oauth_login
+from lethe.tools import oauth_login_openai
 
 
 def test_is_oauth_available_openai_from_env(monkeypatch):
@@ -178,12 +178,12 @@ async def test_openai_device_poll_times_out(monkeypatch):
     async def _noop_sleep(seconds):
         return None
 
-    monkeypatch.setattr(oauth_login.httpx, "AsyncClient", lambda timeout=30.0: _Client())
-    monkeypatch.setattr(oauth_login.time, "monotonic", _monotonic)
-    monkeypatch.setattr(oauth_login.asyncio, "sleep", _noop_sleep)
+    monkeypatch.setattr(oauth_login_openai.httpx, "AsyncClient", lambda timeout=30.0: _Client())
+    monkeypatch.setattr(oauth_login_openai.time, "monotonic", _monotonic)
+    monkeypatch.setattr(oauth_login_openai.asyncio, "sleep", _noop_sleep)
 
     with pytest.raises(RuntimeError, match="Timed out waiting for OpenAI device authorization"):
-        await oauth_login._openai_poll_for_authorization_code(
+        await oauth_login_openai._openai_poll_for_authorization_code(
             device_auth_id="dev_123",
             user_code="code_abc",
             interval_seconds=1,

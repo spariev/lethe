@@ -15,11 +15,12 @@ from lethe.memory.llm import AsyncLLMClient, LLMConfig
 from lethe.memory.hippocampus import Hippocampus
 
 __all__ = [
-    "MemoryStore",
-    "BlockManager",
-    "ArchivalMemory",
+    "MemoryStore", 
+    "BlockManager", 
+    "ArchivalMemory", 
     "MessageHistory",
-    "AsyncLLMClient",
+
+    "AsyncLLMClient", 
     "LLMConfig",
     "Hippocampus",
 ]
